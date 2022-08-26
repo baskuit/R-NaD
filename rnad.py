@@ -67,16 +67,16 @@ class RNaD:
             logits_batch, policy_batch, value_batch = self.net.forward(input_batch)
 
         M = input_batch[:batch_size]
-        A = policy_batch[:batch_size].view(batch_size, size, 1)
-        B = policy_batch[batch_size:].view(batch_size, 1, size)
+        A = policy_batch[:batch_size].view(batch_size, 1, size)
+        B = policy_batch[batch_size:].view(batch_size, size, 1)
 
-        u = torch.matmul(B, torch.matmul(M, A))
-        X = torch.matmul(B, M)
-        Y = -torch.matmul(M, A)
-        max_X = torch.max(X, dim=2)[0]
+        # u = torch.matmul(B, torch.matmul(M, A))
+        X = torch.matmul(A, M)
+        Y = torch.matmul(M, B)
+        min_X = torch.min(X, dim=2)[0]
         max_Y = torch.max(Y, dim=1)[0]
 
-        expl = max_X + max_Y
+        expl = max_Y - min_X
 
         return logits_batch, policy_batch, value_batch, expl
 
@@ -84,16 +84,16 @@ class RNaD:
         batch_size = input_batch.shape[0] // 2
 
         M = input_batch[:batch_size]
-        A = policy_batch[:batch_size].view(batch_size, size, 1)
-        B = policy_batch[batch_size:].view(batch_size, 1, size)
+        A = policy_batch[:batch_size].view(batch_size, 1, size)
+        B = policy_batch[batch_size:].view(batch_size, size, 1)
 
-        u = torch.matmul(B, torch.matmul(M, A))
-        X = torch.matmul(B, M)
-        Y = -torch.matmul(M, A)
-        max_X = torch.max(X, dim=2)[0]
+        # u = torch.matmul(B, torch.matmul(M, A))
+        X = torch.matmul(A, M)
+        Y = torch.matmul(M, B)
+        min_X = torch.min(X, dim=2)[0]
         max_Y = torch.max(Y, dim=1)[0]
 
-        expl = max_X + max_Y
+        expl = max_Y - min_X
 
         return expl
 
@@ -230,4 +230,4 @@ if __name__ == '__main__':
     #plot shit
     x = RNaD()
     # x.RPS_animation(12, 9)
-    x.exploitability_demo(total_batches_exp=16, steps_exp=8, lr=.001)
+    x.exploitability_demo(total_batches_exp=14, steps_exp=8, lr=.001)
