@@ -1,3 +1,6 @@
+from email import policy
+from numbers import Rational
+from token import N_TOKENS
 import torch
 import pygambit
 import numpy as np
@@ -22,18 +25,39 @@ def second_half (input_batch) :
     return input_batch[input_batch.shape[0]//2 : ]
 
 
-RPS = torch.tensor([[[0, -1, 1], [1, 0, -1], [-1, 1, 0]]])
+RPS = torch.tensor([[[0, -1, 1], [1, 0, -1], [-1, 1, 0]]], dtype=torch.float)
 
-def to_gambit_game (input_batch) :
+def solve (input_batch) :
 
-    x = np.array(torch.stack((input_batch, flip(input_batch)), dim=1))
-    y = pygambit.Game()
-    y.from_arrays(x)
-    print(x)
-    print(x.shape)
+    if len(input_batch.shape) == 3:
+        return [solve(_) for _ in input_batch]
+
+    # single n x n matrices now
+    M = input_batch
+    size = M.shape[0]
+    N = np.zeros((size, size), dtype=pygambit.Decimal)
+    for _ in range(size) :
+        for __ in range(size) :
+            N[_][__] = pygambit.Decimal(M[_][__].item())
+
+    g = pygambit.Game.from_arrays(N, -N)
+    solutions = pygambit.nash.enummixed_solve(g, rational=False)[0]
+
+    solutions0 = [solutions[_] for _ in range(size)]
+    solutions1 = [solutions[_] for _ in range(size, 2*size)]
+    solutions = [solutions0, solutions1]
+    return solutions
 
 if __name__ == '__main__':
-    
-    to_gambit_game(RPS)
+    input_batch = normal_batch(3, 2**6)
+
+    strategies = solve(input_batch)
+    policy_batch = torch.tensor(strategies).swapaxes(0, 1)
+
+    import Metric
+
+    expl = Metric.expl(input_batch, policy_batch[0], policy_batch[1])
+    print(expl)
+        # print(s1)
 
     
