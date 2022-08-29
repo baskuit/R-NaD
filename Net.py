@@ -12,7 +12,6 @@ class FCResBlock (nn.Module):
 
     def __init__ (self, m, n, batch_norm=True) :
         super().__init__()
-        self.n = n
         self.fc0 = nn.Linear(m, n)
         self.fc1 = nn.Linear(n, m)
         if batch_norm:
@@ -23,7 +22,7 @@ class FCResBlock (nn.Module):
             self.bn1 = nn.Identity()
     
     def forward (self, input_batch):
-
+        
         return input_batch + self.bn1(torch.relu(self.fc1(self.bn0(torch.relu(self.fc0(input_batch))))))
         
 class FCNet (nn.Module):
@@ -69,6 +68,7 @@ def step_neurd (net, optimizer, scheduler, input_batch) :
     advantages = rewards - value_batch.squeeze(dim=1)
     policy_loss = torch.mean(-action_logits * advantages.detach() / action_probabilities.detach())
     value_loss = torch.mean(advantages**2)
+    entropy_loss = F.cross_entropy(policy_batch, policy_batchX)
     loss = policy_loss + value_loss
     loss.backward()
     optimizer.step()

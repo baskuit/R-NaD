@@ -1,3 +1,5 @@
+import Data
+
 import torch
 
 def expl (input_batch, policy_batch0, policy_batch1) :
@@ -14,3 +16,12 @@ def expl (input_batch, policy_batch0, policy_batch1) :
         expl = max_Y - min_X
         return expl
 
+def mean_expl(net, input_batch) :
+
+        batch_size, size, _ = input_batch.shape
+        input_batch_flip_cat = Data.flip_cat(input_batch)
+        logit_batch, policy_batch, value_batch = net.forward(input_batch_flip_cat)
+        policy_batch0 = policy_batch[:batch_size]
+        policy_batch1 = policy_batch[batch_size:]
+        e = expl(input_batch, policy_batch0, policy_batch1)
+        return torch.mean(e)
