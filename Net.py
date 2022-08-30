@@ -66,10 +66,14 @@ def step_neurd (net, optimizer, scheduler, input_batch) :
 
     rewards = torch.cat((player_one_rewards, -player_one_rewards), dim=0)
     advantages = rewards - value_batch.squeeze(dim=1)
+
     policy_loss = torch.mean(-action_logits * advantages.detach() / action_probabilities.detach())
+
     value_loss = torch.mean(advantages**2)
-    entropy_loss = F.cross_entropy(policy_batch, policy_batchX)
-    loss = policy_loss + value_loss
+
+    entropy_loss = F.cross_entropy(policy_batch, policy_batch)
+
+    loss = policy_loss + value_loss + entropy_loss
     loss.backward()
     optimizer.step()
     scheduler.step()

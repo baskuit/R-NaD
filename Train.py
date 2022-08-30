@@ -1,18 +1,22 @@
+import math
 from pickletools import optimize
 import Net
 import Data
 import Metric
 
 import torch
+import random
 # import ray.tune
 
 def train (params : dict) :
+    result = {}
+
     if 'size' not in params:
         params['size'] = 3
     if 'depth' not in params:
-        params['depth'] = 1
+        params['depth'] = 2
     if 'width' not in params:
-        params['width'] = 27
+        params['width'] = 9
     if 'lr' not in params:
         params['lr'] = .01
     if 'update' not in params:
@@ -34,7 +38,7 @@ def train (params : dict) :
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     validation_batch = Data.normal_batch(params['size'], params['validation_batch_size'])
 
-    policy_checkpoints = {}
+    checkpoints = {}
 
     for step in range(params['total_steps']):
         input_batch = Data.normal_batch(params['size'], params['batch_size'])
@@ -42,25 +46,43 @@ def train (params : dict) :
 
         if step%params['interval'] == 0:
             logits, policy, value = net.forward(Data.flip_cat(validation_batch))
-            policy_checkpoints[step] = policy
+            data = {}
+            data['policy'] = policy.detach()
+            checkpoints[step] = data
+            mean_policy = sum([_['policy'] for _ in checkpoints.values()]) / len(checkpoints)
+            data['mean_policy'] = mean_policy
+            expl = torch.mean(Metric.expl(validation_batch, mean_policy[:params['validation_batch_size']], mean_policy[params['validation_batch_size']:]))
+            data['expl'] = expl
+    result['net'] = net
+    result['checkpoints'] = checkpoints
+    result['score'] = checkpoints[max(checkpoints.keys())]['expl'].item()
+    result['final_policy'] = checkpoints[max(checkpoints.keys())]['policy']
+    result['validation_batch'] = validation_batch
 
-    total_policy = sum(policy_checkpoints.values())
-    s = torch.sum(total_policy) / 2
+    return result
 
-    mean_policy = total_policy / s
-    print(total_policy)
-    print(s)
-    print(mean_policy)
-    expl = Metric.expl(validation_batch, mean_policy[:params['validation_batch_size']], mean_policy[params['validation_batch_size']:])
-    print(expl)
-
-
-
+def hyperparameter_generator (total_frames) :
+    while True:
+        params = {}
+        params['lr'] = math.exp(-6*random.random()-2)
+        params['batch_size'] = int(math.exp(5*random.random()+2))
+        params['total_steps'] = total_frames // params['batch_size']
+        yield params
 
 
 if __name__ == '__main__' :
-    train(
-        {'validation_batch_size':1,
-        'interval':2**9,
-        'total_steps':2**10
+    result = train(
+        {'validation_batch_size':2**0,
+        'batch_size':2**10,
+        'interval':2**8,
+        'total_steps':2**13,
+        'lr':.01
         })
+    print('validation matrices')
+    print(result['validation_batch'])
+    print('solutions')
+    print(Data.solve(result['validation_batch']))
+    print('mean policy')
+    print(result['final_policy'])
+    print('expl')
+    print(result['score'])
