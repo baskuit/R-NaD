@@ -28,15 +28,19 @@ def train (params : dict) :
         params['total_steps'] = 2**10
     if 'interval' not in params:
         params['interval'] = 1
+    if 'validation_batch' not in params:
+        params['validation_batch'] = None
     if 'validation_batch_size' not in params:
         params['validation_batch_size'] = 2**10
 
-    net = Net.FCNet(params['size'], params['width'], batch_norm=False)
+    net = Net.FCNet(params['size'], params['width'], batch_norm=True)
     optimizer = torch.optim.SGD(net.parameters(), lr=params['lr'])
     def lr_lambda(epoch):
         return params['lr']
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-    validation_batch = Data.normal_batch(params['size'], params['validation_batch_size'])
+    if params['validation_batch'] is None:
+        params['validation_batch_size'] = Data.normal_batch(params['size'], params['validation_batch_size'])
+    validation_batch =  params['validation_batch']
 
     checkpoints = {}
 
@@ -63,26 +67,44 @@ def train (params : dict) :
 
 def hyperparameter_generator (total_frames) :
     while True:
-        params = {}
-        params['lr'] = math.exp(-6*random.random()-2)
-        params['batch_size'] = int(math.exp(5*random.random()+2))
+        params = {
+        'size' : 3,
+        'lr' : math.exp(-6*random.random()-2),
+        'batch_size' : int(math.exp(5*random.random()+2)),
+        'depth' : random.randint(1, 4),
+        'width' : int(math.exp(2+3*random.random())),
+        'interval' : 2**6
+        }
         params['total_steps'] = total_frames // params['batch_size']
         yield params
 
 
 if __name__ == '__main__' :
-    result = train(
-        {'validation_batch_size':2**0,
-        'batch_size':2**10,
-        'interval':2**8,
-        'total_steps':2**13,
-        'lr':.01
-        })
-    print('validation matrices')
-    print(result['validation_batch'])
-    print('solutions')
-    print(Data.solve(result['validation_batch']))
-    print('mean policy')
-    print(result['final_policy'])
-    print('expl')
-    print(result['score'])
+
+    validation_batch_size = 2**10
+    validation_batch = Data.normal_batch(3, validation_batch_size)
+    generator = hyperparameter_generator(2**16)
+
+    print(validation_batch[0])
+    print(Data.solve(validation_batch[0]))
+
+    for _ in range(2**4):
+        params = generator.__next__()
+        print(params)
+        params['validation_batch'] = validation_batch
+
+
+        result = None
+        try:
+            result = train(params)
+        except Exception as e: 
+            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+            print(e)
+        
+        if not result is None:
+            print('mean policy0 lol')
+            print(result['final_policy'][0])
+            print('expl')
+            print(result['score'])
+        print()
+
