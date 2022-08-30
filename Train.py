@@ -73,24 +73,25 @@ def hyperparameter_generator (total_frames) :
         'batch_size' : int(math.exp(5*random.random()+2)),
         'depth' : random.randint(1, 4),
         'width' : int(math.exp(2+3*random.random())),
-        'interval' : 2**6
         }
         params['total_steps'] = total_frames // params['batch_size']
+        params['interval'] = params['total_steps'] // 100
         yield params
 
 
 if __name__ == '__main__' :
-
+    total_frames = 2**20
     validation_batch_size = 2**10
     validation_batch = Data.normal_batch(3, validation_batch_size)
-    generator = hyperparameter_generator(2**16)
+    generator = hyperparameter_generator(total_frames)
 
-    print(validation_batch[0])
-    print(Data.solve(validation_batch[0]))
+    print('Total Frames: {}'.format(total_frames))
+    print('Validator Batch Size: {}'.format(validation_batch_size))
 
-    for _ in range(2**4):
+    data = []
+
+    for _ in range(2**6):
         params = generator.__next__()
-        print(params)
         params['validation_batch'] = validation_batch
 
 
@@ -102,9 +103,12 @@ if __name__ == '__main__' :
             print(e)
         
         if not result is None:
-            print('mean policy0 lol')
-            print(result['final_policy'][0])
-            print('expl')
-            print(result['score'])
+            del params['validation_batch']
+            data.append((params, result['score']))
+
+    data.sort(key=lambda _:_[1])
+    for _ in data[:10]:
+        print(_[0])
+        print(_[1])
         print()
 
