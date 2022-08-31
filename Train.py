@@ -70,7 +70,7 @@ def hyperparameter_generator (total_frames) :
         params = {
         'size' : 3,
         'lr' : math.exp(-6*random.random()-2),
-        'batch_size' : int(math.exp(5*random.random()+2)),
+        'batch_size' : int(math.exp(2*random.random()+2)),
         'depth' : random.randint(1, 4),
         'width' : int(math.exp(2+3*random.random())),
         }
@@ -80,7 +80,7 @@ def hyperparameter_generator (total_frames) :
 
 
 if __name__ == '__main__' :
-    total_frames = 2**20
+    total_frames = 2**18
     validation_batch_size = 2**10
     validation_batch = Data.normal_batch(3, validation_batch_size)
     generator = hyperparameter_generator(total_frames)
