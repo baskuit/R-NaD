@@ -1,13 +1,10 @@
-import math
-from pickletools import optimize
 import Net
 import Data
 import Metric
 
 import torch
 import random
-import copy
-# import ray.tune
+import math
 
 # inner loop of RNaD
 def train (params={}) :
@@ -40,7 +37,7 @@ def train (params={}) :
     if 'interval' not in params:
         params['interval'] = params['total_steps'] // 10
     if 'validation_batch_size' not in params:
-        params['validation_batch_size'] = 2**10
+        params['validation_batch_size'] = int(2**10)
     if params['validation_batch'] is None:
         params['validation_batch'] = Data.normal_batch(params['size'], params['validation_batch_size'])
     validation_batch =  params['validation_batch']
@@ -64,25 +61,23 @@ def train (params={}) :
         Net.step_neurd(net, optimizer, scheduler, input_batch, eta, params['net_fixed'])
 
         if step % params['interval'] == 0:
-
             logits, policy, value = net.forward(Data.flip_cat(validation_batch))
+            expl = torch.mean(Metric.expl(validation_batch, policy[:params['validation_batch_size']], policy[params['validation_batch_size']:]))
+            data = {'policy': policy.clone().detach()}
+            checkpoints[step] = data
+            
             mean_policy = sum([_['policy'] for _ in checkpoints.values()]) / len(checkpoints)
             mean_expl = torch.mean(Metric.expl(validation_batch, mean_policy[:params['validation_batch_size']], mean_policy[params['validation_batch_size']:]))
-            expl = torch.mean(Metric.expl(validation_batch, policy[:params['validation_batch_size']], policy[params['validation_batch_size']:]))
-
-            data = {
-            'policy' : policy.detach(),
-            'mean_policy' : mean_policy,
-            'mean_expl' : mean_expl,
-            'expl' : expl,
-            'lr' : scheduler.get_last_lr()
-            }
-
-            checkpoints[step] = data
+            
+            data['mean_policy'] = mean_policy
+            data['mean_expl'] = mean_expl
+            data['expl'] = expl
+            data['lr'] = scheduler.get_last_lr()
 
     result['net_dict'] = net.state_dict().copy()
     result['checkpoints'] = checkpoints
     last_data = checkpoints[max(checkpoints.keys())]
+
     result['policy'] = last_data['policy']
     result['mean_policy'] = last_data['mean_policy']
     result['expl'] = last_data['expl'].item()

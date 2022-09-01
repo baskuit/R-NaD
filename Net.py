@@ -1,6 +1,3 @@
-from audioop import cross
-from email import policy
-from pickletools import optimize
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -46,7 +43,7 @@ class FCNet (nn.Module):
         value_batch = self.value(x)
         return logits_batch, policy_batch, value_batch
 
-def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None) :
+def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, grad_clip=1000) :
 
     batch_size, size = input_batch.shape[:2]
     # [H, H, .. H]
@@ -84,6 +81,7 @@ def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None) :
 
     loss = policy_loss + value_loss + entropy_loss
     loss.backward()
+    nn.utils.clip_grad_norm_(net.parameters(), grad_clip) #TODO grad clip param
     optimizer.step()
     scheduler.step()
     optimizer.zero_grad()
