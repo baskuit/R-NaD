@@ -1,13 +1,16 @@
 import math
+from pickletools import optimize
 import Net
 import Data
 import Metric
 
 import torch
 import random
+import copy
 # import ray.tune
 
-def train (params : dict) :
+# inner loop of RNaD
+def train (params={}) :
     result = {}
 
     if 'size' not in params:
@@ -16,51 +19,76 @@ def train (params : dict) :
         params['depth'] = 2
     if 'width' not in params:
         params['width'] = 9
+    if 'dropout' not in params:
+        params['dropout'] = .5
+    if 'update' not in params: #unused
+        params['update'] = 'neurd'
+
     if 'lr' not in params:
         params['lr'] = .01
-    if 'update' not in params:
-        params['update'] = 'neurd'
+    if 'eta' not in params:
+        params['eta'] = 0 #important as non-zero will try to call forward on default net_fixed
+    if 'log_eta_decay' not in params:
+        params['log_eta_decay'] = 1
+    if 'log_lr_decay' not in params:
+        params['log_lr_decay'] = 1
 
     if 'batch_size' not in params:
         params['batch_size'] = 2**6
     if 'total_steps' not in params:
         params['total_steps'] = 2**10
     if 'interval' not in params:
-        params['interval'] = 1
-    if 'validation_batch' not in params:
-        params['validation_batch'] = None
+        params['interval'] = params['total_steps'] // 10
     if 'validation_batch_size' not in params:
         params['validation_batch_size'] = 2**10
-
-    net = Net.FCNet(params['size'], params['width'], batch_norm=True)
-    optimizer = torch.optim.SGD(net.parameters(), lr=params['lr'])
-    def lr_lambda(epoch):
-        return params['lr']
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     if params['validation_batch'] is None:
-        params['validation_batch_size'] = Data.normal_batch(params['size'], params['validation_batch_size'])
+        params['validation_batch'] = Data.normal_batch(params['size'], params['validation_batch_size'])
     validation_batch =  params['validation_batch']
+
+    if 'net' not in params:
+        params['net'] = Net.FCNet(params['size'], params['width'], dropout=params['dropout'])
+    net = params['net']
+    if 'net_fixed' not in params:
+        params['net_fixed'] = None
+
+    optimizer = torch.optim.SGD(net.parameters(), lr=params['lr'])
+    def lr_lambda(step):
+        return params['lr'] * math.exp(params['log_lr_decay'] * step / (params['total_steps'] + 1))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     checkpoints = {}
 
     for step in range(params['total_steps']):
         input_batch = Data.normal_batch(params['size'], params['batch_size'])
-        Net.step_neurd(net, optimizer, scheduler, input_batch)
+        eta = params['eta'] * math.exp(params['log_eta_decay'] * step / (params['total_steps'] + 1))
+        Net.step_neurd(net, optimizer, scheduler, input_batch, eta, params['net_fixed'])
 
-        if step%params['interval'] == 0:
+        if step % params['interval'] == 0:
+
             logits, policy, value = net.forward(Data.flip_cat(validation_batch))
-            data = {}
-            data['policy'] = policy.detach()
-            checkpoints[step] = data
             mean_policy = sum([_['policy'] for _ in checkpoints.values()]) / len(checkpoints)
-            data['mean_policy'] = mean_policy
-            expl = torch.mean(Metric.expl(validation_batch, mean_policy[:params['validation_batch_size']], mean_policy[params['validation_batch_size']:]))
-            data['expl'] = expl
-    result['net'] = net
+            mean_expl = torch.mean(Metric.expl(validation_batch, mean_policy[:params['validation_batch_size']], mean_policy[params['validation_batch_size']:]))
+            expl = torch.mean(Metric.expl(validation_batch, policy[:params['validation_batch_size']], policy[params['validation_batch_size']:]))
+
+            data = {
+            'policy' : policy.detach(),
+            'mean_policy' : mean_policy,
+            'mean_expl' : mean_expl,
+            'expl' : expl,
+            'lr' : scheduler.get_last_lr()
+            }
+
+            checkpoints[step] = data
+
+    result['net_dict'] = net.state_dict().copy()
     result['checkpoints'] = checkpoints
-    result['score'] = checkpoints[max(checkpoints.keys())]['expl'].item()
-    result['final_policy'] = checkpoints[max(checkpoints.keys())]['policy']
-    result['validation_batch'] = validation_batch
+    last_data = checkpoints[max(checkpoints.keys())]
+    result['policy'] = last_data['policy']
+    result['mean_policy'] = last_data['mean_policy']
+    result['expl'] = last_data['expl'].item()
+    result['mean_expl'] = last_data['mean_expl'].item()
+    
+    result['validation_batch'] = validation_batch # in case not passed?
 
     return result
 

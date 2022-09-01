@@ -6,28 +6,38 @@ import Train
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
+import copy
 
+# Implementation of single action Regularized Nash Dynamics to approximate equilibrium for zero-sum normally-distributed matices.
+# The update rule is single-action NeuRD, although PG and all-action updates may also be implemented
+# The learning rate and eta parameters are on exponential decay schedule
 class RNaD ():
 
     def __init__ (self, params):
+        if 'size' not in params:
+            params['size'] = 3
         if 'outer_steps' not in params:
             params['outer_steps'] = 2**8
         if 'inner_steps' not in params:
             params['inner_steps'] = 2**8
-        if 'eta' not in params:
-            params['eta'] = 1
-        if 'eta_decay' not in params:
-            params['eta_decay'] = .99
-            # mentioned as good practice in section 7.1 
+        if 'eta_start' not in params:
+            params['eta_start'] = 1.0
+        if 'eta_end' not in params:
+            params['eta_end'] = 0.001
+        if 'lr_start' not in params:
+            params['lr_start'] = .01
+        if 'lr_end' not in params:
+            params['lr_end'] = 0.001
+            # mentioned as good practice in section 7.1  
 
-        # if 'r' not in params:
-        #     params['r'] = lambda rewards, pi, mu : rewards + torch.log(pi) - torch.log(mu)
-        #     # r^{i}_{pi}(h, a) = r^{i}(h, a) + \eta (1 - 2\delta_{h,i}) \log{frac{\pi(a)}{\mu{a}}}
-        #     # r(rewards, pi, mu):
-        #     # gets policy info from self
+        if 'batch_size' not in params:
+            params['batch_size'] = 2**7
+        if 'validation_batch' not in params:
+            params['validation_batch'] = Data.normal_batch(params['size'], 2**10)
 
-        self.nets_current = None
-        self.nets_past = None
+        self.net_current = None
+        self.net_past = None
         # net_past gives mu, net_current gives pi
 
         self.outer_step_data = {}
@@ -35,17 +45,39 @@ class RNaD ():
         self.params = params
 
     def run (self):
+        log_eta_decay = (math.log(self.params['eta_end']) - math.log(self.params['eta_start'])) / self.params['outer_steps']
+        log_lr_decay = (math.log(self.params['lr_end']) - math.log(self.params['lr_start'])) / self.params['outer_steps']
 
-        for outer_step in range(self.params['outer_steps']): 
-            self.run_outer_step ()
+        self.net_current = Net.FCNet(self.params['size'], self.params['depth'], self.params['dropout'])
+        self.net_past = self.net_current #mu = pi on initialization
 
-    def run_outer_step (self):
-        pass
+        for outer_step in range(self.params['outer_steps']):
+            inner_loop_params = {
+                'size':self.params['size'],
+                'total_steps':self.params['inner_loop_steps'],
+                'batch_size':self.params['batch_size'],
+                'validation_batch':self.params['validation_batch'],
+                'net':self.net_current,
+                'net_fixed':self.net_past,
+                'eta':math.exp(outer_step*log_eta_decay) *self.params['eta_start'],
+                'lr':math.exp(outer_step*log_lr_decay) * self.params['lr_start'],
+                'log_eta_decay' : log_eta_decay, # decay in the inner loop for smoothness
+                'log_lr_decay' : log_lr_decay
+            }
+            result = self.run_inner_loop (inner_loop_params)
+            self.outer_step_data[outer_step] = result
+            # TODO
 
+            eta *= math.exp(log_eta_decay)
+            self.net_past = copy.deepcopy(self.net_current)
+            # net_current's weights are updated but it is constant
+            # net_past is iteratively assigned to deep copy of current
 
-
-
+    def run_inner_loop (self, inner_loop_params):
+        result = Train.train(inner_loop_params)
+        return result
 
 if __name__ == "__main__":
     
-    
+    x = RNaD()
+    x.run()
