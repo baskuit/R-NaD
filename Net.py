@@ -46,7 +46,10 @@ class FCNet (nn.Module):
         value_batch = self.value(x)
         return logits_batch, policy_batch, value_batch
 
-def step_neurd (net, optimizer, scheduler, input_batch) :
+# input will be flip cat
+def step_neurd (net, optimizer, scheduler, input_batch, old_net=None, eta=.1) :
+
+    # TODO
 
     batch_size, size = input_batch.shape[:2]
     # [H, H, .. H]
@@ -65,6 +68,9 @@ def step_neurd (net, optimizer, scheduler, input_batch) :
     # entries of matrix corresponding to pairs of selected actions
 
     rewards = torch.cat((player_one_rewards, -player_one_rewards), dim=0)
+    if old_net is not None:
+        logits_batch_, policy_batch_, value_batch_ = old+net.forward(input_batch_flip_cat)
+        rewards -= eta * (torch.log(policy_batch) - torch.log(policy_batch_))
     advantages = rewards - value_batch.squeeze(dim=1)
 
     policy_loss = torch.mean(-action_logits * advantages.detach() / action_probabilities.detach())
