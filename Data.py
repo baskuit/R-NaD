@@ -6,6 +6,11 @@ def normal_batch (size, batch_size, mean=0, std=1) :
 # with torch.no_grad():
     return torch.normal(mean, std, size=(batch_size, size, size))
 
+def discrete_batch (size, batch_size, values=(-1, 0, 1)) :
+    values = torch.tensor(values, dtype=torch.float)
+    return values[torch.randint(len(values), (batch_size, size, size))]  
+
+
 def flip (input_batch) :
     return torch.swapaxes(-input_batch, 1, 2)
 
@@ -46,6 +51,9 @@ def solve (input_batch) :
     return solutions
 
 if __name__ == '__main__':
+    print('rand int')
+    print(discrete_batch(3, 1))
+
     input_batch = normal_batch(3, 2**6)
 
     strategies = solve(input_batch)
@@ -54,7 +62,7 @@ if __name__ == '__main__':
     import Metric
 
     expl = Metric.expl(input_batch, policy_batch[0], policy_batch[1])
-    print(expl)
+    # print(expl)
         # print(s1)
 
     

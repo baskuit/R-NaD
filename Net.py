@@ -11,6 +11,7 @@ class FCResBlock (nn.Module):
         super().__init__()
         self.fc0 = nn.Linear(m, n)
         self.fc1 = nn.Linear(n, m)
+        self.leaky = nn.LeakyReLU()
         if dropout > 0:
             self.dropout0 = nn.Dropout(p=dropout)
             self.dropout1 = nn.Dropout(p=dropout)
@@ -20,7 +21,7 @@ class FCResBlock (nn.Module):
     
     def forward (self, input_batch):
         
-        return input_batch + self.dropout1(torch.relu(self.fc1(self.dropout0(torch.relu(self.fc0(input_batch))))))
+        return input_batch + self.dropout1(self.leaky(self.fc1(self.dropout0(self.leaky(self.fc0(input_batch))))))
         
 class FCNet (nn.Module):
 
@@ -81,6 +82,8 @@ def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, g
 
     loss = policy_loss + value_loss + entropy_loss
     loss.backward()
+    # for _ in net.parameters():
+    #     print(_.grad)
     nn.utils.clip_grad_norm_(net.parameters(), grad_clip) #TODO grad clip param
     optimizer.step()
     scheduler.step()
@@ -113,15 +116,15 @@ def step_cel (net, optimizer, scheduler, input_batch) :
 if __name__ == '__main__' :
     batch_size = 2**10
     total_steps = 2**10
-    old_net = FCNet(3, 27, 0)
-    net = FCNet(3, 27, 0)
+    old_net = FCNet(3, 9, 1)
+    net = FCNet(3, 9, 1)
     optimizer = torch.optim.SGD(net.parameters(), lr=.01)
     def lr_lambda(epoch):
-        return .001
+        return .01
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     # for step in range(total_steps):
     #     input_batch = Data.normal_batch(3, batch_size)
     #     step_neurd(net, optimizer, scheduler, input_batch)
 
-    step_neurd (net, optimizer, scheduler, Data.RPS, .1, old_net)
+    step_neurd (net, optimizer, scheduler, Data.RPS, 0, old_net)
