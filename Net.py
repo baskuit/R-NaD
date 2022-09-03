@@ -103,9 +103,9 @@ def step_cel (net, optimizer, scheduler, input_batch) :
     target_batch = torch.cat((target_batch[0], target_batch[1]), dim=0)
 
     crossentropy_loss = F.cross_entropy(policy_batch, target_batch, reduction='mean')
-    value_loss = torch.mean((payoff_batch - value_batch)**2)
+    # value_loss = torch.mean((payoff_batch - value_batch)**2)
 
-    loss = crossentropy_loss + value_loss
+    loss = crossentropy_loss
     loss.backward()
     optimizer.step()
     scheduler.step()
@@ -118,7 +118,7 @@ if __name__ == '__main__' :
     total_steps = 2**10
     old_net = FCNet(3, 9, 1)
     net = FCNet(3, 9, 1)
-    optimizer = torch.optim.SGD(net.parameters(), lr=.01)
+    optimizer = torch.optim.SGD(net.parameters())
     def lr_lambda(epoch):
         return .01
 

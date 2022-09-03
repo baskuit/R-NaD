@@ -130,13 +130,12 @@ def train_cel (params={}) :
         params['total_steps'] = 2**10
     if 'interval' not in params:
         params['interval'] = params['total_steps'] // 10
-    if 'validation_batch_size' not in params:
-        params['validation_batch_size'] = int(2**10)
     if params['validation_batch'] is None:
-        params['validation_batch'] = Data.normal_batch(params['size'], params['validation_batch_size'])
+        params['validation_batch'] = Data.discrete_batch(params['size'], params['validation_batch_size'])
     validation_batch =  params['validation_batch']
     if 'example' not in params:
         params['example'] = Data.normal_batch(params['size'], 1)
+    params['validation_batch_size'] = params['validation_batch'].shape[0]
 
     if 'net' not in params:
         params['net'] = Net.FCNet(params['size'], params['width'], dropout=params['dropout'])
@@ -152,14 +151,15 @@ def train_cel (params={}) :
     checkpoints = {}
 
     for step in range(params['total_steps']):
-        input_batch = Data.normal_batch(params['size'], params['batch_size'])
+        input_batch = Data.discrete_batch(params['size'], params['batch_size'])
         Net.step_cel(net, optimizer, scheduler, input_batch)
-
         if step % params['interval'] == 0:
             logits, policy, value = net.forward(Data.flip_cat(validation_batch))
             expl = torch.mean(Metric.expl(validation_batch, policy[:params['validation_batch_size']], policy[params['validation_batch_size']:]))
+
             data = {'policy': policy.clone().detach()}
             checkpoints[step] = data
+
             
             mean_policy = sum([_['policy'] for _ in checkpoints.values()]) / len(checkpoints)
             mean_expl = torch.mean(Metric.expl(validation_batch, mean_policy[:params['validation_batch_size']], mean_policy[params['validation_batch_size']:]))
@@ -169,32 +169,34 @@ def train_cel (params={}) :
             data['expl'] = expl
             data['lr'] = scheduler.get_last_lr()
 
-    result['net_dict'] = net.state_dict().copy()
-    result['checkpoints'] = checkpoints
+    # result['net_dict'] = net.state_dict().copy()
+    # result['checkpoints'] = checkpoints
     last_data = checkpoints[max(checkpoints.keys())]
 
     result['policy'] = last_data['policy']
-    result['mean_policy'] = last_data['mean_policy']
     result['expl'] = last_data['expl'].item()
     result['mean_expl'] = last_data['mean_expl'].item()
-    
+    result['min_expl'] = min([_['expl'].item() for _ in checkpoints.values()])
+    [print(_) for __, _ in result.items()]
     result['validation_batch'] = validation_batch # in case not passed?
 
-    example = params['example']
-    print('expl')
-    print(result['expl'])
-    print(example)
-    _, policy_batch, __ = net.forward(Data.flip_cat(example))
-    print(Data.solve(example))
-    print(policy_batch)
+    # example = params['example']
+    # print('expl')
+    # print(result['expl'])
+    # print('min_expl')
+    # print(result['min_expl'])
+    # print(example)
+    # _, policy_batch, __ = net.forward(Data.flip_cat(example))
+    # print(Data.solve(example))
+    # print(policy_batch)
 
 
     return result
 
 if __name__ == '__main__' :
     total_frames = 2**18
-    validation_batch_size = 2**10
-    validation_batch = Data.normal_batch(3, validation_batch_size)
+    validation_batch_size = 2**8
+    validation_batch = Data.discrete_batch(3, validation_batch_size)
     generator = hyperparameter_generator(total_frames)
 
     print('Total Frames: {}'.format(total_frames))
@@ -202,7 +204,7 @@ if __name__ == '__main__' :
 
     data = []
 
-    for _ in range(2**3):
+    for _ in range(2**5):
         params = generator.__next__()
         params['validation_batch'] = validation_batch
 
@@ -214,13 +216,3 @@ if __name__ == '__main__' :
             print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             print(e)
         
-        if not result is None:
-            del params['validation_batch']
-            data.append((params, result['expl']))
-
-    data.sort(key=lambda _:_[1])
-    for _ in data[:10]:
-        print(_[0])
-        print(_[1])
-        print()
-

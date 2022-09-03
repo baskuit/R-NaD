@@ -52,7 +52,8 @@ def solve (input_batch) :
 
 if __name__ == '__main__':
     print('rand int')
-    print(discrete_batch(3, 1))
+    print(discrete_batch(3, 2**7).shape)
+    print(discrete_batch(3, 2**7).shape)
 
     input_batch = normal_batch(3, 2**6)
 
