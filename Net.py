@@ -44,6 +44,69 @@ class FCNet (nn.Module):
         value_batch = self.value(x)
         return logits_batch, policy_batch, value_batch
 
+
+
+
+    ### Conv 2D
+
+
+
+
+class CrossConv (nn.Module) :
+    def __init__ (self, size, in_channels, out_channels) :
+        super().__init__()
+        self.size = size
+        self.row_conv = nn.Conv2d(in_channels, out_channels, kernel_size=(1, 2*size-1))
+        self.col_conv = nn.Conv2d(in_channels, out_channels, kernel_size=(2*size-1, 1))
+
+    def forward (self, input):
+        x = F.pad(input, (self.size-1, self.size-1, 0, 0))
+        r = self.row_conv(x)
+        y = F.pad(input, (0, 0, self.size-1, self.size-1))
+        c = self.col_conv(y)
+        return r + c
+
+class ConvResBlock (nn.Module):
+
+    def __init__ (self, size, channels, batch_norm=True) :
+        super().__init__()
+        self.conv0 = CrossConv(size, channels, channels)
+        self.conv1 = CrossConv(size, channels, channels)
+        self.leaky = nn.LeakyReLU()
+        if batch_norm > 0:
+            self.batch_norm0 = nn.BatchNorm2d(channels)
+            self.batch_norm1 = nn.BatchNorm2d(channels)
+        else:
+            self.batch_norm0 = nn.Identity()
+            self.batch_norm1 = nn.Identity()
+    
+    def forward (self, input_batch):
+        return input_batch + self.batch_norm1(self.leaky(self.conv1(self.batch_norm0(self.leaky(self.conv0(input_batch))))))
+
+class ConvNet (nn.Module):
+
+    def __init__ (self, size, channels, depth=1, batch_norm=True) :
+        super().__init__()
+        self.size = size
+        self.channels = channels
+        self.pre = CrossConv(size, 1, channels)
+        self.tower = nn.ParameterList([ConvResBlock(size, channels, batch_norm) for _ in range(depth)])
+        self.policy = nn.Linear(channels * (size**2), size)
+        self.value =  nn.Linear(channels * (size**2), 1)
+
+    def forward (self, input_batch) :
+        x = input_batch.unsqueeze(dim=1)
+        x = self.pre(x)
+        for block in self.tower:
+            x = block(x)
+        print(x.shape)
+        x = x.view(-1, self.channels*(self.size**2))
+        print(x.shape)
+        logits_batch = self.policy(x)
+        policy_batch = F.softmax(logits_batch, dim=1)
+        value_batch = self.value(x)
+        return logits_batch, policy_batch, value_batch
+
 def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, grad_clip=1000) :
 
     batch_size, size = input_batch.shape[:2]
@@ -89,21 +152,13 @@ def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, g
     scheduler.step()
     optimizer.zero_grad()
 
-def step_cel (net, optimizer, scheduler, input_batch) :
+def step_cel (net, optimizer, scheduler, input_batch, strategies0, strategies1) :
     batch_size, size = input_batch.shape[:2]
     input_batch_flip_cat = Data.flip_cat(input_batch)
     logits_batch, policy_batch, value_batch = net.forward(input_batch_flip_cat)
 
-    strategies = Data.solve(input_batch)
-    target_batch = torch.tensor(strategies).swapaxes(0, 1)
-    A = target_batch[0].view(batch_size, 1, size)
-    B = target_batch[1].view(batch_size, size, 1)
-    payoff_batch = torch.matmul(torch.matmul(A, input_batch), B)
-    payoff_batch = Data.flip_cat(payoff_batch).view(2*batch_size, 1)
-    target_batch = torch.cat((target_batch[0], target_batch[1]), dim=0)
-
+    target_batch = torch.cat((strategies0, strategies1), dim=0)
     crossentropy_loss = F.cross_entropy(policy_batch, target_batch, reduction='mean')
-    # value_loss = torch.mean((payoff_batch - value_batch)**2)
 
     loss = crossentropy_loss
     loss.backward()
@@ -111,9 +166,14 @@ def step_cel (net, optimizer, scheduler, input_batch) :
     scheduler.step()
     optimizer.zero_grad()
 
-    # Need NE strats and payoffs
-
 if __name__ == '__main__' :
+    size = 5
+    net = ConvNet(size=size, channels=3, depth=1, batch_norm=True)
+    input_batch = Data.discrete_batch(size, 2**1)
+
+    output_batch = net(input_batch)
+    print(output_batch)
+    exit()
     batch_size = 2**10
     total_steps = 2**10
     old_net = FCNet(3, 9, 1)
