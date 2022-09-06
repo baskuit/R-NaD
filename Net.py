@@ -53,6 +53,7 @@ class FCNet (nn.Module):
 
 
 class CrossConv (nn.Module) :
+
     def __init__ (self, size, in_channels, out_channels) :
         super().__init__()
         self.size = size
@@ -104,6 +105,14 @@ class ConvNet (nn.Module):
         policy_batch = F.softmax(logits_batch, dim=1)
         value_batch = self.value(x)
         return logits_batch, policy_batch, value_batch
+
+
+
+
+    ### Update Rules
+
+
+
 
 def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, grad_clip=50) :
 
@@ -164,25 +173,26 @@ def step_cel (net, optimizer, scheduler, input_batch, strategies0, strategies1) 
     scheduler.step()
     optimizer.zero_grad()
 
+
+
+
+
+
+
 if __name__ == '__main__' :
     size = 5
-    net = ConvNet(size=size, channels=3, depth=1, batch_norm=True)
-    input_batch = Data.discrete_batch(size, 2**1)
-
-    output_batch = net(input_batch)
-    print(output_batch)
-    exit()
     batch_size = 2**10
     total_steps = 2**10
     old_net = FCNet(3, 9, 1)
     net = FCNet(3, 9, 1)
-    optimizer = torch.optim.SGD(net.parameters())
     def lr_lambda(epoch):
-        return .01
+        return .1
+    optimizer = torch.optim.SGD(net.parameters(), lr=.1)
+
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     # for step in range(total_steps):
     #     input_batch = Data.normal_batch(3, batch_size)
     #     step_neurd(net, optimizer, scheduler, input_batch)
 
-    step_neurd (net, optimizer, scheduler, Data.RPS, 0, old_net)
+    step_neurd (net, optimizer, scheduler, Data.RPS, eta=1, net_fixed=old_net)

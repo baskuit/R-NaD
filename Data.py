@@ -4,38 +4,55 @@ import numpy as np
 
 import Metric
 
-def normal_batch (size, batch_size, mean=0, std=1) :
-# with torch.no_grad():
-    return torch.normal(mean, std, size=(batch_size, size, size))
+# Intended to compute, save, and load the collection of nxn zero sum matrices that satisfy certain conditions
+class Game () :
 
-def discrete_batch (size, batch_size, values=(-1, 0, 1)) :
-    values = torch.tensor(values, dtype=torch.float)
-    return values[torch.randint(len(values), (batch_size, size, size))]  
+    def __init__ (self, size, values=[-1, 0, 1]) :
+        self.size = size
+        self.values = values
+        self.matrices = None
+        self.strategies0 = None
+        self.strategies1 = None
+        self.expanded = False
+    
+    def generate (self, current=[], values=[-1, 0, 1]) :
+        if len(current) == self.size**2 :
+            yield torch.tensor(current, dtype=torch.float).view(-1, self.size, self.size)
+        else:
+            for _ in values :
+                next = current.copy()
+                next.append(_)
+                for __ in self.generate(next, values) :
+                    yield __
+
+    def solve_filtered (self, unique=True, interior=True) :
+        self.matrices = torch.cat(list(self.generate([], self.values)), dim=0)
+    
+        self.matrices, strategy_list = solve_batch_filtered(self.matrices, unique, interior)
+        strategy_list = [s[0] for s in strategy_list]
+
+        strategies = torch.stack(strategy_list, dim=0)
+        strategies = split_strategies(strategies)
+        
+        self.strategies0 = strategies[0]
+        self.strategies1 = strategies[1]
+
+    def generate_input_batch (self, batch_size) :
+
+        m = self.matrices.shape[0]
+        idx = torch.randint(0, m-1, (batch_size,))
+        return self.matrices[idx].detach(), self.strategies0[idx], self.strategies1[idx]
+
+    # TODO if/when needed
+    def save (self) :
+        pass
+
+    def load (self) :
+        pass
 
 
-def flip (input_batch) :
-    return torch.swapaxes(-input_batch, 1, 2)
+    
 
-def flip_cat (input_batch) :
-    return torch.cat((input_batch, flip(input_batch)), dim=0)
-
-def normal_batch_flip_cat (size, batch_size, mean=0, std=1) :
-    return flip_cat(normal_batch(size, batch_size, mean=0, std=1))
-
-def first_half (input_batch) :
-    return input_batch[ : input_batch.shape[0]//2]
-
-def second_half (input_batch) :
-    return input_batch[input_batch.shape[0]//2 : ]
-
-def epsilon_threshold(input_batch, epsilon):
-    w = torch.relu(input_batch - epsilon)
-    x = w + epsilon
-    y = -epsilon *torch.sign(torch.relu(w)) + epsilon
-    return torch.nn.functional.normalize(x - y, p=1, dim=1)
-
-
-RPS = torch.tensor([[[0, -1, 1], [1, 0, -1], [-1, 1, 0]]], dtype=torch.float)
 
 #solve a single mxn matrix, return b x 2*n tensor
 def solve (input) :
@@ -86,51 +103,42 @@ def solve_batch_filtered (input_batch, unique=True, interior=True) :
 
 
 
-class Memoized () :
+def normal_batch (size, batch_size, mean=0, std=1) :
+# with torch.no_grad():
+    return torch.normal(mean, std, size=(batch_size, size, size))
 
-    def __init__ (self, size, values=[-1, 0, 1]) :
-        self.size = size
-        self.values = values
-        self.matrices = None
-        self.strategies0 = None
-        self.strategies1 = None
-        self.expanded = False
-    
-    def generate (self, current=[], values=[-1, 0, 1]) :
-        if len(current) == self.size**2 :
-            yield torch.tensor(current, dtype=torch.float).view(-1, self.size, self.size)
-        else:
-            for _ in values :
-                next = current.copy()
-                next.append(_)
-                for __ in self.generate(next, values) :
-                    yield __
+def discrete_batch (size, batch_size, values=(-1, 0, 1)) :
+    values = torch.tensor(values, dtype=torch.float)
+    return values[torch.randint(len(values), (batch_size, size, size))]  
 
-    def solve_filtered (self, unique=True, interior=True) :
-        self.matrices = torch.cat(list(self.generate([], self.values)), dim=0)
-    
-        self.matrices, strategy_list = solve_batch_filtered(self.matrices, unique, interior)
-        strategy_list = [s[0] for s in strategy_list]
+def flip (input_batch) :
+    return torch.swapaxes(-input_batch, 1, 2)
 
-        strategies = torch.stack(strategy_list, dim=0)
-        strategies = split_strategies(strategies)
-        
-        self.strategies0 = strategies[0]
-        self.strategies1 = strategies[1]
+def flip_cat (input_batch) :
+    return torch.cat((input_batch, flip(input_batch)), dim=0)
 
-    def generate_input_batch (self, batch_size) :
+def normal_batch_flip_cat (size, batch_size, mean=0, std=1) :
+    return flip_cat(normal_batch(size, batch_size, mean=0, std=1))
 
-        m = self.matrices.shape[0]
-        idx = torch.randint(0, m-1, (batch_size,))
-        return self.matrices[idx].detach(), self.strategies0[idx], self.strategies1[idx]
+def first_half (input_batch) :
+    return input_batch[ : input_batch.shape[0]//2]
+
+def second_half (input_batch) :
+    return input_batch[input_batch.shape[0]//2 : ]
+
+def epsilon_threshold(input_batch, epsilon):
+    pass
 
 
+
+RPS = torch.tensor([[[0, -1, 1], [1, 0, -1], [-1, 1, 0]]], dtype=torch.float)
 
 
 
 if __name__ == '__main__':
-    x = Memoized(3)
-    x.solve_filtered()
+
+    x = Game(3)
+    x.solve_filtered(unique=True, interior=True)
     input_batch, strategy0, strategy1  = x.generate_input_batch(2)
     print(input_batch)
     print(strategy0)
