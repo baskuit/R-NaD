@@ -99,9 +99,7 @@ class ConvNet (nn.Module):
         x = self.pre(x)
         for block in self.tower:
             x = block(x)
-        print(x.shape)
         x = x.view(-1, self.channels*(self.size**2))
-        print(x.shape)
         logits_batch = self.policy(x)
         policy_batch = F.softmax(logits_batch, dim=1)
         value_batch = self.value(x)
