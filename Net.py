@@ -105,7 +105,7 @@ class ConvNet (nn.Module):
         value_batch = self.value(x)
         return logits_batch, policy_batch, value_batch
 
-def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, grad_clip=1000) :
+def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, grad_clip=50) :
 
     batch_size, size = input_batch.shape[:2]
     # [H, H, .. H]

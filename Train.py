@@ -7,8 +7,10 @@ import random
 import math
 import matplotlib.pyplot as plt
 
+
+
 # inner loop of RNaD
-def train_neurd (params={}) :
+def train (params={}) :
 
     if 'size' not in params:
         params['size'] = 3
@@ -99,12 +101,13 @@ def train_cel (params={}) :
     if 'depth' not in params:
         params['depth'] = 2
     if 'width' not in params:
-        params['width'] = 9
+        params['width'] = 81
+    if 'channels' not in params:
+        params['channels'] = 9
     if 'dropout' not in params:
         params['dropout'] = .5
-    if 'update' not in params: #unused
-        params['update'] = 'neurd'
-
+    if 'batch_norm' not in params:
+        params['batch_norm'] = True
 
     if 'lr' not in params:
         params['lr'] = .01
@@ -132,8 +135,6 @@ def train_cel (params={}) :
         params['validation_batch'] = Data.discrete_batch(params['size'], params['validation_batch_size'])
     validation_batch =  params['validation_batch']
     params['validation_batch_size'] = validation_batch.shape[0]
-    if 'example' not in params:
-        params['example'] = Data.normal_batch(params['size'], 1)
 
     optimizer = torch.optim.SGD(net.parameters(), lr=params['lr'])
     def lr_lambda(step):
@@ -169,13 +170,13 @@ def hyperparameter_generator (total_frames) :
     for _ in range(2**20):
         params = {
         'size' : 3,
-        'lr' : math.exp(-2*random.random()-0.75),
-        'log_lr_decay' : -math.log(2 + 8 * random.random()),
+        'lr' : .1,
+        'log_lr_decay' : 0,
         'batch_size' : int(math.exp(2*random.random()+2)),
         'depth' : random.randint(1, 4),
         'width' : int(math.exp(2+3*random.random())),
         }
-        params['total_steps'] = total_frames // params['batch_size']
+        params['total_steps'] = 2**16
         params['interval'] = params['total_steps'] // 100
         yield params
 

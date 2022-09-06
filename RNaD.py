@@ -90,48 +90,35 @@ class RNaD ():
             print("eta: {}, lr: {}".format(inner_loop_params['eta'], inner_loop_params['lr']))
 
             try:
-                result = self.run_inner_loop (inner_loop_params)
+                checkpoints = self.run_inner_loop (inner_loop_params)
             except Exception as e: 
                 print('Train() Error causing outer loop abort. Run terminated')
                 print(e)
                 self.terminated = True
                 return
 
-            self.outer_step_data[outer_step] = result
-            self.net_past = copy.deepcopy(self.net_current)
-            # self.net_current = Net.FCNet(   self.params['size'], 
-            #                             self.params['width'],
-            #                             self.params['depth'], 
-            #                             self.params['dropout'])
-            # net_current's weights are updated but it is constant
-            # net_past is iteratively assigned to deep copy of current
-
-            print("expl: {}".format(result['expl']))
-            print("mean_expl: {}".format(result['mean_expl']))
-            print()
-
-            self.terminated = True
+        self.terminated = True
 
     def run_inner_loop (self, inner_loop_params):
-        result = Train.train(inner_loop_params)
+        result = Train.train_neurd(inner_loop_params)
         return result
 
 if __name__ == "__main__":
 
     params = {
         'size' : 3,
-        'width' : 27,
+        'width' : 81,
         'depth' : 1,
         'dropout' : .5,
-        'outer_steps' : 2**8,
-        'inner_steps' : 2**16,
-        'eta_start' : 10,
+        'outer_steps' : 2**6,
+        'inner_steps' : 2**10,
+        'eta_start' : 5,
         'eta_end' : 0.1,
-        'lr_start' : .001,
-        'lr_end' : 0.0001,
+        'lr_start' : .1,
+        'lr_end' : 0.02,
         'batch_size' : 2**5,
-        'validation_batch' : Data.normal_batch(3, 2**10)
     }
+
     x = RNaD(params)  
     x.run()
 
