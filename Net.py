@@ -114,7 +114,7 @@ class ConvNet (nn.Module):
 
 
 
-def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, grad_clip=50) :
+def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, grad_clip=1000) :
 
     batch_size, size = input_batch.shape[:2]
     # [H, H, .. H]
@@ -140,6 +140,7 @@ def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, g
         player_one_rewards -= Data.first_half(eta_log)
         player_one_rewards += Data.second_half(eta_log)
 
+
     rewards = torch.cat((player_one_rewards, -player_one_rewards), dim=0)
 
     advantages = rewards - value_batch.squeeze(dim=1)
@@ -158,6 +159,54 @@ def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, g
     optimizer.step()
     scheduler.step()
     optimizer.zero_grad()
+
+
+
+def step_neurd_all_actions (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None) :
+
+    batch_size, size = input_batch.shape[:2]
+    input_batch_flip_cat = Data.flip_cat(input_batch)
+    logits_batch, policy_batch, value_batch = net.forward(input_batch_flip_cat)
+    
+    actions = torch.squeeze(torch.multinomial(policy_batch, num_samples=1), dim=-1)
+
+
+    A = actions[:batch_size]
+    B = actions[batch_size:]
+
+    rewards_A =  input_batch[torch.arange(batch_size), :, B]
+    rewards_B = -input_batch[torch.arange(batch_size), A, :]
+
+    pi_A, pi_B = Data.split(policy_batch)
+
+    if eta > 0:
+        with torch.no_grad() :
+            logits_batch_fixed, policy_batch_fixed, value_batch_fixed = net_fixed.forward(input_batch_flip_cat)
+        mu_A, mu_B = Data.split(policy_batch_fixed)
+
+        rewards_mod_A = (torch.log(pi_A) - torch.log(mu_A)) - (torch.log(pi_B[torch.arange(batch_size), B]) - torch.log(mu_B[torch.arange(batch_size), B])).view(-1, 1)
+        rewards_mod_B = (torch.log(pi_B) - torch.log(mu_B)) - (torch.log(pi_A[torch.arange(batch_size), A]) - torch.log(mu_A[torch.arange(batch_size), A])).view(-1, 1)
+
+        rewards_A -=  eta * rewards_mod_A
+        rewards_B -=  eta * rewards_mod_B
+
+    rewards = torch.cat((rewards_A, rewards_B), dim=0)
+
+    rewards_observed = rewards[torch.arange(batch_size * 2), actions].view(-1, 1)
+
+    advantages = rewards-value_batch
+
+    policy_loss = torch.mean(torch.sum(-logits_batch * advantages.detach(), dim=1))
+    value_loss = torch.mean((value_batch - rewards_observed)**2)
+    entropy_loss = F.cross_entropy(policy_batch, policy_batch)
+
+    loss = policy_loss + value_loss + entropy_loss
+    loss.backward()
+
+    optimizer.step()
+    scheduler.step()
+    optimizer.zero_grad()
+
 
 def step_cel (net, optimizer, scheduler, input_batch, strategies0, strategies1) :
     batch_size, size = input_batch.shape[:2]
@@ -180,7 +229,7 @@ def step_cel (net, optimizer, scheduler, input_batch, strategies0, strategies1) 
 
 
 if __name__ == '__main__' :
-    size = 5
+    size = 3
     batch_size = 2**10
     total_steps = 2**10
     old_net = FCNet(3, 9, 1)
@@ -195,4 +244,4 @@ if __name__ == '__main__' :
     #     input_batch = Data.normal_batch(3, batch_size)
     #     step_neurd(net, optimizer, scheduler, input_batch)
 
-    step_neurd (net, optimizer, scheduler, Data.RPS, eta=1, net_fixed=old_net)
+    step_neurd_all_actions (net, optimizer, scheduler, Data.normal_batch(size, 2), eta=1, net_fixed=old_net)

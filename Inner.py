@@ -20,9 +20,9 @@ class Inner () :
             params['size'] = 3
         if 'values' not in params:
             params['values'] = (-1, 0, 1)
-        if 'memoization' not in params:
-            params['memoization'] = Data.Game(params['size'], params['values'])
-            params['memoization'].solve_filtered(unique=True, interior=True)
+        if 'game' not in params:
+            params['game'] = Data.Game(params['size'], params['values'])
+            params['game'].solve_filtered(unique=True, interior=True)
 
         # Net architecture
         if 'net_type' not in params: #only used if net is not passed
@@ -56,6 +56,8 @@ class Inner () :
             params['log_lr_decay'] = 0
         if 'eta' not in params:
             params['eta'] = 0 #important as non-zero will try to call forward on default net_fixed
+        if 'grad_clip' not in params:
+            params['grad_clip'] = 1000
         if 'log_eta_decay' not in params:
             params['log_eta_decay'] = 1
         if 'batch_size' not in params:
@@ -79,14 +81,38 @@ class Inner () :
 
         for step in range(self.params['total_steps']):
 
-            input_batch, strategies0, strategies1 = self.params['memoization'].generate_input_batch(self.params['batch_size'])
+            input_batch, strategies0, strategies1 = self.params['game'].generate_input_batch(self.params['batch_size'])
 
             if self.params['update'] == 'neurd' :
-                Net.step_neurd(self.params['net'], self.params['optimizer'], self.params['scheduler'], input_batch, self.params['eta'], self.params['net_fixed'])
+                Net.step_neurd(
+                    net=self.params['net'], 
+                    optimizer=self.params['optimizer'], 
+                    scheduler=self.params['scheduler'], 
+                    input_batch=input_batch, 
+                    eta=self.params['eta'], 
+                    net_fixed=self.params['net_fixed'],
+                    grad_clip=self.params['grad_clip']
+                )
+
             elif self.params['update'] == 'cel':
-                Net.step_cel(self.params['net'], self.params['optimizer'], self.params['scheduler'], input_batch, strategies0, strategies1)
-            else:
-                pass
+                Net.step_cel(
+                    net=self.params['net'], 
+                    optimizer=self.params['optimizer'], 
+                    scheduler=self.params['scheduler'], 
+                    input_batch=input_batch,
+                    strategies0=strategies0, 
+                    strategies1=strategies1
+                )
+
+            elif self.params['update'] == 'neurd_all_actions' :
+                Net.step_neurd_all_actions(
+                    net=self.params['net'], 
+                    optimizer=self.params['optimizer'], 
+                    scheduler=self.params['scheduler'], 
+                    input_batch=input_batch, 
+                    eta=self.params['eta'], 
+                    net_fixed=self.params['net_fixed'],
+                )
 
             if step % self.params['interval'] == 0:
                 self.params['net'].eval()
@@ -109,11 +135,11 @@ def hyperparameter_generator (total_frames) :
     for _ in range(2**20):
         params = {
         'size' : 3,
-        'lr' : .1,
-        'log_lr_decay' : 0,
-        'batch_size' : int(math.exp(2*random.random()+2)),
-        'depth' : random.randint(1, 4),
-        'width' : int(math.exp(2+3*random.random())),
+        # 'lr' : .001,
+        # 'log_lr_decay' : 0,
+        # 'batch_size' : int(math.exp(2*random.random()+2)),
+        # 'depth' : random.randint(1, 4),
+        # 'width' : int(math.exp(2+3*random.random())),
         }
         params['total_steps'] = 2**16
         params['interval'] = params['total_steps'] // 100
@@ -122,10 +148,13 @@ def hyperparameter_generator (total_frames) :
 def random_search (params={}) :
 
     if 'tries' not in params:
-        params['tries'] = 2**5
-    total_frames = 2**20
+        params['tries'] = 2**3
+    total_frames = 2**16
     M = Data.Game(3)
     M.solve_filtered()
+
+    net = Net.FCNet(size=3, width=81, depth=2, dropout=.5)
+
     validation_batch = M.matrices
     validation_batch_size = validation_batch.shape[0]    
     generator = hyperparameter_generator(total_frames)
@@ -137,16 +166,26 @@ def random_search (params={}) :
     data = []
 
     for _ in range(params['tries']):
-        loop_params = generator.__next__()
+        loop_params = {}
         [print(_, __) for _, __ in loop_params.items()]
-
+        loop_params['total_steps'] = 2**16
+        loop_params['interval'] = loop_params['total_steps'] // 100
+        
         loop_params['validation_batch'] = validation_batch
         loop_params['memoization'] = M
+
+        loop_params['net'] = net
+        loop_params['update'] = 'neurd_all_actions'
+        loop_params['net_fixed'] = net
+        loop_params['eta'] = 1
+        loop_params['lr'] = .001
+        loop_params['grad_clip'] = 100
 
         try:
             loop = Inner(loop_params)
             loop.run()
             checkpoints = loop.checkpoints
+
         except Exception as e: 
             print(e)
             checkpoints = None
@@ -161,5 +200,21 @@ def random_search (params={}) :
 
 if __name__ == '__main__' :
 
-    random_search()
+    # random_search()
+    net = Net.FCNet(size=3, width=81, depth=2, dropout=.5)
+    old_net = net
+    net.eval()
+    old_net.eval()
+    for _ in range(10**6) :
+        _, __, ___ = net.forward(Data.RPS)
+        a, b, c =   old_net.forward(Data.RPS)
+
+        print(c.item(), ___.item())
+
+        old_net = net
+        net = Net.FCNet(size=3, width=81, depth=2, dropout=.5)
+        
+        net.eval()
+        old_net.eval()
+
 

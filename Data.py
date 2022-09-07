@@ -120,6 +120,10 @@ def flip_cat (input_batch) :
 def normal_batch_flip_cat (size, batch_size, mean=0, std=1) :
     return flip_cat(normal_batch(size, batch_size, mean=0, std=1))
 
+def split (input_batch) :
+    k = input_batch.shape[0]//2
+    return input_batch[ : k], input_batch[k : ]
+
 def first_half (input_batch) :
     return input_batch[ : input_batch.shape[0]//2]
 

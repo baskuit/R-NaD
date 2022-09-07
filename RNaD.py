@@ -1,7 +1,7 @@
 import Data
 import Metric
 import Net
-import Train
+import Inner
 
 import torch
 import torch.nn as nn
@@ -100,7 +100,7 @@ class RNaD ():
         self.terminated = True
 
     def run_inner_loop (self, inner_loop_params):
-        result = Train.train_neurd(inner_loop_params)
+        result = Inner.train_neurd(inner_loop_params)
         return result
 
 if __name__ == "__main__":
