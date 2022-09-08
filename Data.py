@@ -130,10 +130,6 @@ def first_half (input_batch) :
 def second_half (input_batch) :
     return input_batch[input_batch.shape[0]//2 : ]
 
-def epsilon_threshold(input_batch, epsilon):
-    pass
-
-
 
 RPS = torch.tensor([[[0, -1, 1], [1, 0, -1], [-1, 1, 0]]], dtype=torch.float)
 

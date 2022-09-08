@@ -7,45 +7,80 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-import copy
 
-# Implementation of single action Regularized Nash Dynamics to approximate equilibrium for zero-sum normally-distributed matices.
+# Implementation of Regularized Nash Dynamics to approximate equilibrium for collections of zero-sum matrices.
 # The update rule is single-action NeuRD, although PG and all-action updates may also be implemented
 # The learning rate and eta parameters are on exponential decay schedule
 class RNaD ():
 
     def __init__ (self, params={}):
+
+        # Game
         if 'size' not in params:
             params['size'] = 3
-        if 'width' not in params:
-            params['width'] = 128
+        if 'values' not in params:
+            params['values'] = (-1, 0, 1)
+        if 'game' not in params:
+            params['game'] = Data.Game(params['size'], params['values'])
+            params['game'].solve_filtered(unique=True, interior=True)
+
+        # Net architecture
+        if 'net_type' not in params: #only used if net is not passed
+            params['net_type'] = 'FCNet'      
         if 'depth' not in params:
-            params['depth'] = 1
+            params['depth'] = 2
+        if 'width' not in params:
+            params['width'] = 81
+        if 'channels' not in params:
+            params['channels'] = 9
         if 'dropout' not in params:
             params['dropout'] = .5
+        if 'batch_norm' not in params:
+            params['batch_norm'] = True
+        if 'relu_leak' not in params: #unused currently
+            params['relu_leak'] = .05
+        if 'net' not in params:
+            if params['net_type'] == 'FCNet' :
+                params['net'] = Net.FCNet(size=params['size'], width=params['width'], depth=params['depth'], dropout=params['dropout'])
+                params['net_fixed'] = Net.FCNet(size=params['size'], width=params['width'], depth=params['depth'], dropout=params['dropout'])
 
+            if params['net_type'] == 'ConvNet' :
+                params['net'] = Net.ConvNet(size=params['size'], channels=params['channels'], depth=params['depth'], batch_norm=params['batch_norm'])
+                params['net_fixed'] = Net.ConvNet(size=params['size'], channels=params['channels'], depth=params['depth'], batch_norm=params['batch_norm'])
+            params['net_fixed'].load_state_dict(params['net'].state_dict())
+        # if 'nex_fixed' not in params:
+        #     params['net_fixed'] = copy.deepcopy(params['net'])
+
+        # Learning
+        if 'update' not in params:
+            params['update'] = 'neurd'
+        if 'grad_clip' not in params:
+            params['grad_clip'] = 1000
+        if 'batch_size' not in params:
+            params['batch_size'] = 2**6
+        if 'validation_batch' not in params:
+            params['validation_batch'] = params['game'].matrices
+        params['validation_batch_size'] = params['validation_batch'].shape[0]
+
+        # RNaD
         if 'outer_steps' not in params:
-            params['outer_steps'] = 2**9
+            params['outer_steps'] = 2**7
         if 'inner_steps' not in params:
             params['inner_steps'] = 2**16
+        if 'interval' not in params:
+            params['interval'] = params['inner_steps'] // 3
         if 'eta_start' not in params:
             params['eta_start'] = 1.0
         if 'eta_end' not in params:
-            params['eta_end'] = 0.001
+            params['eta_end'] = 0.1
         if 'lr_start' not in params:
-            params['lr_start'] = .005
+            params['lr_start'] = .004
         if 'lr_end' not in params:
-            params['lr_end'] = 0.0001
-            # mentioned as good practice in section 7.1  
-
-        if 'batch_size' not in params:
-            params['batch_size'] = 2**7
-        if 'validation_batch' not in params:
-            params['validation_batch'] = Data.normal_batch(params['size'], 2**10)
-
-        self.net_current = None
-        self.net_past = None
-        # net_past gives mu, net_current gives pi
+            params['lr_end'] = 0.0008
+        if 'value_loss_weight' not in params:
+            params['value_loss_weight'] = 1 
+        if 'entropy_loss_weight' not in params:
+            params['entropy_loss_weight'] = 1 
 
         self.outer_step_data = {}
 
@@ -65,58 +100,65 @@ class RNaD ():
         log_eta_decay = (math.log(self.params['eta_end']) - math.log(self.params['eta_start'])) / self.params['outer_steps']
         log_lr_decay = (math.log(self.params['lr_end']) - math.log(self.params['lr_start'])) / self.params['outer_steps']
 
-        self.net_current = Net.FCNet(   self.params['size'], 
-                                        self.params['width'],
-                                        self.params['depth'], 
-                                        self.params['dropout'])
-        self.net_past = self.net_current #mu = pi on initialization
-
         for outer_step in range(self.params['outer_steps']):
 
             inner_loop_params = {
                 'size':self.params['size'],
-                'total_steps':self.params['inner_steps'],
-                'batch_size':self.params['batch_size'],
-                'validation_batch':self.params['validation_batch'],
-                'net':self.net_current,
-                'net_fixed':self.net_past,
-                'eta':math.exp(outer_step*log_eta_decay) *self.params['eta_start'],
+                'values':self.params['values'],
+                'game':self.params['game'],
+                'net':self.params['net'],
+                'net_fixed':self.params['net_fixed'],
+                'update':self.params['update'],
                 'lr':math.exp(outer_step*log_lr_decay) * self.params['lr_start'],
-                'log_eta_decay' : log_eta_decay, # decay in the inner loop for smoothness
-                'log_lr_decay' : log_lr_decay
+                'value_loss_weight':self.params['value_loss_weight'],
+                'entropy_loss_weight':self.params['entropy_loss_weight'],
+                'log_lr_decay':log_lr_decay,
+                'eta':math.exp(outer_step*log_eta_decay) *self.params['eta_start'],
+                'log_eta_decay':log_eta_decay, # decay in the inner loop for smoothness
+                'grad_clip':self.params['grad_clip'],
+                'batch_size':self.params['batch_size'],
+                'total_steps':self.params['inner_steps'],
+                'validation_batch':self.params['validation_batch'],
+                'interval':self.params['interval'],
             }
 
             print("outer_step: {}".format(outer_step))
             print("eta: {}, lr: {}".format(inner_loop_params['eta'], inner_loop_params['lr']))
 
-            try:
-                checkpoints = self.run_inner_loop (inner_loop_params)
-            except Exception as e: 
-                print('Train() Error causing outer loop abort. Run terminated')
-                print(e)
-                self.terminated = True
-                return
+            inner_loop = Inner.Inner(inner_loop_params)
+            inner_loop.run()
+            checkpoints = inner_loop.checkpoints
+
+            if self.params['net_type'] == 'FCNet' :
+                self.params['net_fixed'] = Net.FCNet(size=self.params['size'], width=self.params['width'], depth=self.params['depth'], dropout=self.params['dropout'])
+            if self.params['net_type'] == 'ConvNet' :
+                self.params['net_fixed'] = Net.ConvNet(size=self.params['size'], channels=self.params['channels'], depth=self.params['depth'], batch_norm=self.params['batch_norm'])
+            self.params['net_fixed'].load_state_dict(self.params['net'].state_dict())
 
         self.terminated = True
 
-    def run_inner_loop (self, inner_loop_params):
-        result = Inner.train_neurd(inner_loop_params)
-        return result
 
 if __name__ == "__main__":
 
     params = {
-        'size' : 3,
+        'net_type' : 'FCNet', 
+        'depth' : 2,
         'width' : 81,
-        'depth' : 1,
+        'channels' : 9,
         'dropout' : .5,
-        'outer_steps' : 2**6,
-        'inner_steps' : 2**10,
-        'eta_start' : 5,
+        'batch_norm' : True,
+        'update' : 'neurd_all_actions',
+        'grad_clip' : 5,
+        'batch_size' : 2**4,
+        'outer_steps' : 2**8,
+        'inner_steps' : 2**12,
+        'interval' : 2**16 // 3,
+        'eta_start' : 10.0,
         'eta_end' : 0.1,
-        'lr_start' : .1,
-        'lr_end' : 0.02,
-        'batch_size' : 2**5,
+        'lr_start' : .004,
+        'lr_end' : 0.0008,
+        'value_loss_weight':5,
+        'entropy_loss_weight':0,
     }
 
     x = RNaD(params)  

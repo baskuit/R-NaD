@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import copy
 
 import Data
 import Metric
@@ -73,7 +74,7 @@ class ConvResBlock (nn.Module):
         super().__init__()
         self.conv0 = CrossConv(size, channels, channels)
         self.conv1 = CrossConv(size, channels, channels)
-        self.leaky = nn.LeakyReLU()
+        self.leaky = torch.relu
         if batch_norm > 0:
             self.batch_norm0 = nn.BatchNorm2d(channels)
             self.batch_norm1 = nn.BatchNorm2d(channels)
@@ -113,63 +114,60 @@ class ConvNet (nn.Module):
 
 
 
+# TODO Clipping and naming
+# def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, grad_clip=1000) :
 
-def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, grad_clip=1000) :
+#     batch_size, size = input_batch.shape[:2]
+#     # [H, H, .. H]
+#     # [H, H, .. H, -I, -I, ..-I]
+#     # flip cat spilts each matrix game into 2 states ( I is H transposed )
+#     input_batch_flip_cat = Data.flip_cat(input_batch)
+#     logits_batch, policy_batch, value_batch = net.forward(input_batch_flip_cat)
+    
+#     actions = torch.squeeze(torch.multinomial(policy_batch, num_samples=1), dim=-1)
+#     action_logits = logits_batch[torch.arange(2*batch_size), actions]
+#     pi = policy_batch.detach()[torch.arange(2*batch_size), actions]
+
+#     A = actions[:batch_size]
+#     B = actions[batch_size:]
+#     player_one_rewards = input_batch[torch.arange(batch_size), A][torch.arange(batch_size), B]
+#     # entries of matrix corresponding to pairs of selected actions
+
+#     if eta > 0:
+#         with torch.no_grad():
+#             logits_batch_, policy_batch_, value_batch_ = net_fixed.forward(input_batch_flip_cat)
+#         mu = policy_batch_.detach()[torch.arange(2*batch_size), actions]
+#         eta_log = eta * (torch.log(pi) - torch.log(mu))
+#         player_one_rewards -= Data.first_half(eta_log)
+#         player_one_rewards += Data.second_half(eta_log)
+
+#     rewards = torch.cat((player_one_rewards, -player_one_rewards), dim=0)
+
+#     regrets = (value_batch.squeeze(dim=1) - rewards).detach().clone()
+
+#     policy_loss = torch.mean(action_logits * regrets / pi)
+
+#     value_loss = torch.mean(torch.pow(value_batch - rewards, 2))
+
+#     entropy_loss = F.cross_entropy(policy_batch, policy_batch)
+
+#     loss = policy_loss + value_loss + entropy_loss
+#     loss.backward()
+#     # for _ in net.parameters():
+#     #     print(_.grad)
+#     nn.utils.clip_grad_norm_(net.parameters(), grad_clip) #TODO grad clip param
+#     optimizer.step()
+#     scheduler.step()
+#     optimizer.zero_grad()
+
+
+
+def step_neurd_all_actions (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, grad_clip=1000, value_loss_weight=1, entropy_loss_weight=1) :
 
     batch_size, size = input_batch.shape[:2]
-    # [H, H, .. H]
-    # [H, H, .. H, -I, -I, ..-I]
-    # flip cat spilts each matrix game into 2 states
     input_batch_flip_cat = Data.flip_cat(input_batch)
     logits_batch, policy_batch, value_batch = net.forward(input_batch_flip_cat)
-    
-    actions = torch.squeeze(torch.multinomial(policy_batch, num_samples=1), dim=-1)
-    action_logits = logits_batch[torch.arange(2*batch_size), actions]
-    pi = policy_batch[torch.arange(2*batch_size), actions]
-
-    A = actions[:batch_size]
-    B = actions[batch_size:]
-    player_one_rewards = input_batch[torch.arange(batch_size), A][torch.arange(batch_size), B]
-    # entries of matrix corresponding to pairs of selected actions
-
-    if eta > 0:
-        with torch.no_grad():
-            logits_batch_, policy_batch_, value_batch_ = net_fixed.forward(input_batch_flip_cat)
-        mu = policy_batch_[torch.arange(2*batch_size), actions]
-        eta_log = eta * (torch.log(pi) - torch.log(mu))
-        player_one_rewards -= Data.first_half(eta_log)
-        player_one_rewards += Data.second_half(eta_log)
-
-
-    rewards = torch.cat((player_one_rewards, -player_one_rewards), dim=0)
-
-    advantages = rewards - value_batch.squeeze(dim=1)
-
-    policy_loss = torch.mean(-action_logits * advantages.detach() / pi.detach())
-
-    value_loss = torch.mean(advantages**2)
-
-    entropy_loss = F.cross_entropy(policy_batch, policy_batch)
-
-    loss = policy_loss + value_loss + entropy_loss
-    loss.backward()
-    # for _ in net.parameters():
-    #     print(_.grad)
-    nn.utils.clip_grad_norm_(net.parameters(), grad_clip) #TODO grad clip param
-    optimizer.step()
-    scheduler.step()
-    optimizer.zero_grad()
-
-
-
-def step_neurd_all_actions (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None) :
-
-    batch_size, size = input_batch.shape[:2]
-    input_batch_flip_cat = Data.flip_cat(input_batch)
-    logits_batch, policy_batch, value_batch = net.forward(input_batch_flip_cat)
-    
-    actions = torch.squeeze(torch.multinomial(policy_batch, num_samples=1), dim=-1)
-
+    actions = torch.squeeze(torch.multinomial(policy_batch, num_samples=1), dim=-1) # this is where blowup happens. All policies/logits are NaN
 
     A = actions[:batch_size]
     B = actions[batch_size:]
@@ -177,12 +175,12 @@ def step_neurd_all_actions (net, optimizer, scheduler, input_batch, eta=0, net_f
     rewards_A =  input_batch[torch.arange(batch_size), :, B]
     rewards_B = -input_batch[torch.arange(batch_size), A, :]
 
-    pi_A, pi_B = Data.split(policy_batch)
+    pi_A, pi_B = Data.split(policy_batch.detach())
 
     if eta > 0:
         with torch.no_grad() :
             logits_batch_fixed, policy_batch_fixed, value_batch_fixed = net_fixed.forward(input_batch_flip_cat)
-        mu_A, mu_B = Data.split(policy_batch_fixed)
+        mu_A, mu_B = Data.split(policy_batch_fixed.detach())
 
         rewards_mod_A = (torch.log(pi_A) - torch.log(mu_A)) - (torch.log(pi_B[torch.arange(batch_size), B]) - torch.log(mu_B[torch.arange(batch_size), B])).view(-1, 1)
         rewards_mod_B = (torch.log(pi_B) - torch.log(mu_B)) - (torch.log(pi_A[torch.arange(batch_size), A]) - torch.log(mu_A[torch.arange(batch_size), A])).view(-1, 1)
@@ -194,18 +192,28 @@ def step_neurd_all_actions (net, optimizer, scheduler, input_batch, eta=0, net_f
 
     rewards_observed = rewards[torch.arange(batch_size * 2), actions].view(-1, 1)
 
-    advantages = rewards-value_batch
+    regrets = value_batch - rewards
 
-    policy_loss = torch.mean(torch.sum(-logits_batch * advantages.detach(), dim=1))
+    can_decrease = logits_batch > -grad_clip
+    can_increase = logits_batch <  grad_clip
+
+    regrets_negative = regrets.detach().clone()
+    regrets_positive = regrets.detach().clone()
+    regrets_negative[regrets_negative > 0] = 0
+    regrets_positive[regrets_positive < 0] = 0
+    regrets_clipped = (can_decrease * regrets_negative + can_increase * regrets_positive).detach()
+
+    policy_loss = torch.mean(torch.sum(logits_batch * regrets_clipped, dim=1))
     value_loss = torch.mean((value_batch - rewards_observed)**2)
     entropy_loss = F.cross_entropy(policy_batch, policy_batch)
 
-    loss = policy_loss + value_loss + entropy_loss
+    loss = policy_loss + value_loss_weight * value_loss + entropy_loss_weight * entropy_loss
     loss.backward()
 
     optimizer.step()
     scheduler.step()
     optimizer.zero_grad()
+
 
 
 def step_cel (net, optimizer, scheduler, input_batch, strategies0, strategies1) :
@@ -244,4 +252,4 @@ if __name__ == '__main__' :
     #     input_batch = Data.normal_batch(3, batch_size)
     #     step_neurd(net, optimizer, scheduler, input_batch)
 
-    step_neurd_all_actions (net, optimizer, scheduler, Data.normal_batch(size, 2), eta=1, net_fixed=old_net)
+    step_neurd_all_actions (net, optimizer, scheduler, Data.normal_batch(size, 2), eta=1, net_fixed=old_net, grad_clip=.2, value_loss_weight=5, entropy_loss_weight=0)

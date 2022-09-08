@@ -52,14 +52,18 @@ class Inner () :
             params['update'] = 'neurd'
         if 'lr' not in params:
             params['lr'] = .01
+        if 'value_loss_weight' not in params:
+            params['value_loss_weight'] = 1 
+        if 'entropy_loss_weight' not in params:
+            params['entropy_loss_weight'] = 1 
         if 'log_lr_decay' not in params:
             params['log_lr_decay'] = 0
         if 'eta' not in params:
             params['eta'] = 0 #important as non-zero will try to call forward on default net_fixed
-        if 'grad_clip' not in params:
-            params['grad_clip'] = 1000
         if 'log_eta_decay' not in params:
             params['log_eta_decay'] = 1
+        if 'grad_clip' not in params:
+            params['grad_clip'] = 1000
         if 'batch_size' not in params:
             params['batch_size'] = 2**6
         if 'total_steps' not in params:
@@ -91,7 +95,9 @@ class Inner () :
                     input_batch=input_batch, 
                     eta=self.params['eta'], 
                     net_fixed=self.params['net_fixed'],
-                    grad_clip=self.params['grad_clip']
+                    grad_clip=self.params['grad_clip'],
+                    value_loss_weight=self.params['value_loss_weight'],
+                    entropy_loss_weight=self.params['entropy_loss_weight'],
                 )
 
             elif self.params['update'] == 'cel':
@@ -112,13 +118,16 @@ class Inner () :
                     input_batch=input_batch, 
                     eta=self.params['eta'], 
                     net_fixed=self.params['net_fixed'],
+                    grad_clip=self.params['grad_clip'],
+                    value_loss_weight=self.params['value_loss_weight'],
+                    entropy_loss_weight=self.params['entropy_loss_weight'],
                 )
 
             if step % self.params['interval'] == 0:
                 self.params['net'].eval()
                 checkpoint_data = {}
 
-                _, validation_policy_batch, __ = self.params['net'](Data.flip_cat(self.params['validation_batch']))
+                validation_logits_batch, validation_policy_batch, validation_value_batch = self.params['net'](Data.flip_cat(self.params['validation_batch']))
 
                 s0 = Data.first_half(validation_policy_batch)
                 s1 = Data.second_half(validation_policy_batch)
@@ -128,93 +137,88 @@ class Inner () :
 
                 self.checkpoints[step] = checkpoint_data
                 self.params['net'].train()
+            
+                print("checkpoint: {}".format(step))
+                print("max abs logit: {}".format(torch.max(torch.abs(validation_logits_batch)).item()))
+                print('expl: {}'.format(checkpoint_data['expl']))
 
 
 
-def hyperparameter_generator (total_frames) :
-    for _ in range(2**20):
-        params = {
-        'size' : 3,
-        # 'lr' : .001,
-        # 'log_lr_decay' : 0,
-        # 'batch_size' : int(math.exp(2*random.random()+2)),
-        # 'depth' : random.randint(1, 4),
-        # 'width' : int(math.exp(2+3*random.random())),
-        }
-        params['total_steps'] = 2**16
-        params['interval'] = params['total_steps'] // 100
-        yield params
+# def hyperparameter_generator (total_frames) :
+#     for _ in range(2**20):
+#         params = {
+#         'size' : 3,
+#         # 'lr' : .001,
+#         # 'log_lr_decay' : 0,
+#         # 'batch_size' : int(math.exp(2*random.random()+2)),
+#         # 'depth' : random.randint(1, 4),
+#         # 'width' : int(math.exp(2+3*random.random())),
+#         }
+#         params['total_steps'] = 2**16
+#         params['interval'] = params['total_steps'] // 100
+#         yield params
 
-def random_search (params={}) :
+# def random_search (params={}) :
 
-    if 'tries' not in params:
-        params['tries'] = 2**3
-    total_frames = 2**16
-    M = Data.Game(3)
-    M.solve_filtered()
+#     if 'tries' not in params:
+#         params['tries'] = 2**3
+#     total_frames = 2**16
+#     M = Data.Game(3)
+#     M.solve_filtered()
 
-    net = Net.FCNet(size=3, width=81, depth=2, dropout=.5)
+#     net = Net.FCNet(size=3, width=81, depth=2, dropout=.5)
 
-    validation_batch = M.matrices
-    validation_batch_size = validation_batch.shape[0]    
-    generator = hyperparameter_generator(total_frames)
+#     validation_batch = M.matrices
+#     validation_batch_size = validation_batch.shape[0]    
+#     generator = hyperparameter_generator(total_frames)
 
-    print('Total Frames: {}'.format(total_frames))
-    print('Validation Batch Size: {}'.format(validation_batch_size))
-    print('________________')
+#     print('Total Frames: {}'.format(total_frames))
+#     print('Validation Batch Size: {}'.format(validation_batch_size))
+#     print('________________')
 
-    data = []
+#     data = []
 
-    for _ in range(params['tries']):
-        loop_params = {}
-        [print(_, __) for _, __ in loop_params.items()]
-        loop_params['total_steps'] = 2**16
-        loop_params['interval'] = loop_params['total_steps'] // 100
+#     for _ in range(params['tries']):
+#         loop_params = {}
+#         # [print(_, __) for _, __ in loop_params.items()]
+#         loop_params['total_steps'] = 2**16
+#         loop_params['interval'] = loop_params['total_steps'] // 10
         
-        loop_params['validation_batch'] = validation_batch
-        loop_params['memoization'] = M
+#         loop_params['validation_batch'] = validation_batch
+#         loop_params['memoization'] = M
 
-        loop_params['net'] = net
-        loop_params['update'] = 'neurd_all_actions'
-        loop_params['net_fixed'] = net
-        loop_params['eta'] = 1
-        loop_params['lr'] = .001
-        loop_params['grad_clip'] = 100
+#         loop_params['net'] = net
+#         loop_params['update'] = 'neurd_all_actions'
+#         loop_params['net_fixed'] = net
+#         loop_params['eta'] = math.exp(-_/10)
+#         loop_params['lr'] = .001
+#         loop_params['grad_clip'] = 1000
 
-        try:
-            loop = Inner(loop_params)
-            loop.run()
-            checkpoints = loop.checkpoints
+#         loop = Inner(loop_params)
+#         loop.run()
+#         checkpoints = loop.checkpoints
 
-        except Exception as e: 
-            print(e)
-            checkpoints = None
+#         # try:
+#         #     loop = Inner(loop_params)
+#         #     loop.run()
+#         #     checkpoints = loop.checkpoints
+
+#         # except Exception as e: 
+#         #     print(e)
+#         #     checkpoints = None
         
-        if checkpoints is not None:
-            keys = list(checkpoints.keys())
-            keys.sort()
+#         if checkpoints is not None:
+#             keys = list(checkpoints.keys())
+#             keys.sort()
 
-            expl = [checkpoints[_]['expl'] for _ in keys]
-            print('min_expl: {}'.format(min(expl)))
-            print()
+#             expl = [checkpoints[_]['expl'] for _ in keys]
+#             print('min_expl: {}'.format(min(expl)))
+#             print()
 
 if __name__ == '__main__' :
 
     # random_search()
-    net = Net.FCNet(size=3, width=81, depth=2, dropout=.5)
-    old_net = net
-    net.eval()
-    old_net.eval()
-    for _ in range(10**6) :
-        _, __, ___ = net.forward(Data.RPS)
-        a, b, c =   old_net.forward(Data.RPS)
+    pass
 
-        print(c.item(), ___.item())
-
-        old_net = net
-        net = Net.FCNet(size=3, width=81, depth=2, dropout=.5)
-        
-        net.eval()
-        old_net.eval()
 
 
