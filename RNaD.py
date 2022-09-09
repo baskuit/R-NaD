@@ -170,8 +170,8 @@ class RNaD ():
             self.params['net_fixed'].load_state_dict(self.params['net'].state_dict())
 
         self.terminated = True
-        min_expl = min(self.outer_step_data, key=lambda results: results['min_expl'])
-        print(min_expl)
+        data = min(self.outer_step_data, key=lambda results: results['min_expl'])
+        print(data['min_expl'], data['min_expl_asso_value_loss'])
 
     def print_params (self) :
         for key, value in self.params.items() :
@@ -255,5 +255,6 @@ if __name__ == "__main__":
 
     for params in gen:
         params['game'] = game
-        x = RNaD(params)  
+        x = RNaD(params)
+        x.print_params()
         x.run()
