@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import copy
 
-import Data
+import Game
 import Metric
 
 class FCResBlock (nn.Module):
@@ -115,9 +115,9 @@ class ConvNet (nn.Module):
 
 
 # TODO Clipping and naming
-# def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, grad_clip=1000) :
+# def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, logit_threshold=1000) :
 
-#     batch_size, size = input_batch.shape[:2]
+#     policy_batch_size, size = input_batch.shape[:2]
 #     # [H, H, .. H]
 #     # [H, H, .. H, -I, -I, ..-I]
 #     # flip cat spilts each matrix game into 2 states ( I is H transposed )
@@ -125,18 +125,18 @@ class ConvNet (nn.Module):
 #     logits_batch, policy_batch, value_batch = net.forward(input_batch_flip_cat)
     
 #     actions = torch.squeeze(torch.multinomial(policy_batch, num_samples=1), dim=-1)
-#     action_logits = logits_batch[torch.arange(2*batch_size), actions]
-#     pi = policy_batch.detach()[torch.arange(2*batch_size), actions]
+#     action_logits = logits_batch[torch.arange(2*policy_batch_size), actions]
+#     pi = policy_batch.detach()[torch.arange(2*policy_batch_size), actions]
 
-#     A = actions[:batch_size]
-#     B = actions[batch_size:]
-#     player_one_rewards = input_batch[torch.arange(batch_size), A][torch.arange(batch_size), B]
+#     A = actions[:policy_batch_size]
+#     B = actions[policy_batch_size:]
+#     player_one_rewards = input_batch[torch.arange(policy_batch_size), A][torch.arange(policy_batch_size), B]
 #     # entries of matrix corresponding to pairs of selected actions
 
 #     if eta > 0:
 #         with torch.no_grad():
 #             logits_batch_, policy_batch_, value_batch_ = net_fixed.forward(input_batch_flip_cat)
-#         mu = policy_batch_.detach()[torch.arange(2*batch_size), actions]
+#         mu = policy_batch_.detach()[torch.arange(2*policy_batch_size), actions]
 #         eta_log = eta * (torch.log(pi) - torch.log(mu))
 #         player_one_rewards -= Data.first_half(eta_log)
 #         player_one_rewards += Data.second_half(eta_log)
@@ -155,47 +155,49 @@ class ConvNet (nn.Module):
 #     loss.backward()
 #     # for _ in net.parameters():
 #     #     print(_.grad)
-#     nn.utils.clip_grad_norm_(net.parameters(), grad_clip) #TODO grad clip param
+#     nn.utils.clip_grad_norm_(net.parameters(), logit_threshold) #TODO grad clip param
 #     optimizer.step()
 #     scheduler.step()
 #     optimizer.zero_grad()
 
 
 
-def step_neurd_all_actions (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, grad_clip=1000, value_loss_weight=1, entropy_loss_weight=1) :
+def step_neurd_all_actions (
+    net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, 
+    logit_threshold=2, value_loss_weight=1, entropy_loss_weight=1, grad_clip=1000) :
 
-    batch_size, size = input_batch.shape[:2]
-    input_batch_flip_cat = Data.flip_cat(input_batch)
+    policy_batch_size, size = input_batch.shape[:2]
+    input_batch_flip_cat = Game.flip_cat(input_batch)
     logits_batch, policy_batch, value_batch = net.forward(input_batch_flip_cat)
     actions = torch.squeeze(torch.multinomial(policy_batch, num_samples=1), dim=-1) # this is where blowup happens. All policies/logits are NaN
 
-    A = actions[:batch_size]
-    B = actions[batch_size:]
+    A = actions[:policy_batch_size]
+    B = actions[policy_batch_size:]
 
-    rewards_A =  input_batch[torch.arange(batch_size), :, B]
-    rewards_B = -input_batch[torch.arange(batch_size), A, :]
+    rewards_A =  input_batch[torch.arange(policy_batch_size), :, B]
+    rewards_B = -input_batch[torch.arange(policy_batch_size), A, :]
 
-    pi_A, pi_B = Data.split(policy_batch.detach())
+    pi_A, pi_B = Game.split(policy_batch.detach())
 
     if eta > 0:
         with torch.no_grad() :
             logits_batch_fixed, policy_batch_fixed, value_batch_fixed = net_fixed.forward(input_batch_flip_cat)
-        mu_A, mu_B = Data.split(policy_batch_fixed.detach())
+        mu_A, mu_B = Game.split(policy_batch_fixed.detach())
 
-        rewards_mod_A = (torch.log(pi_A) - torch.log(mu_A)) - (torch.log(pi_B[torch.arange(batch_size), B]) - torch.log(mu_B[torch.arange(batch_size), B])).view(-1, 1)
-        rewards_mod_B = (torch.log(pi_B) - torch.log(mu_B)) - (torch.log(pi_A[torch.arange(batch_size), A]) - torch.log(mu_A[torch.arange(batch_size), A])).view(-1, 1)
+        rewards_mod_A = (torch.log(pi_A) - torch.log(mu_A)) - (torch.log(pi_B[torch.arange(policy_batch_size), B]) - torch.log(mu_B[torch.arange(policy_batch_size), B])).view(-1, 1)
+        rewards_mod_B = (torch.log(pi_B) - torch.log(mu_B)) - (torch.log(pi_A[torch.arange(policy_batch_size), A]) - torch.log(mu_A[torch.arange(policy_batch_size), A])).view(-1, 1)
 
         rewards_A -=  eta * rewards_mod_A
         rewards_B -=  eta * rewards_mod_B
 
     rewards = torch.cat((rewards_A, rewards_B), dim=0)
 
-    rewards_observed = rewards[torch.arange(batch_size * 2), actions].view(-1, 1)
+    rewards_observed = rewards[torch.arange(policy_batch_size * 2), actions].view(-1, 1)
 
     regrets = value_batch - rewards
 
-    can_decrease = logits_batch > -grad_clip
-    can_increase = logits_batch <  grad_clip
+    can_decrease = logits_batch > -logit_threshold
+    can_increase = logits_batch <  logit_threshold
 
     regrets_negative = regrets.detach().clone()
     regrets_positive = regrets.detach().clone()
@@ -210,15 +212,18 @@ def step_neurd_all_actions (net, optimizer, scheduler, input_batch, eta=0, net_f
     loss = policy_loss + value_loss_weight * value_loss + entropy_loss_weight * entropy_loss
     loss.backward()
 
+    nn.utils.clip_grad_norm_(net.parameters(), grad_clip) 
     optimizer.step()
     scheduler.step()
     optimizer.zero_grad()
 
 
 
+
+
 def step_cel (net, optimizer, scheduler, input_batch, strategies0, strategies1) :
-    batch_size, size = input_batch.shape[:2]
-    input_batch_flip_cat = Data.flip_cat(input_batch)
+    policy_batch_size, size = input_batch.shape[:2]
+    input_batch_flip_cat = Game.flip_cat(input_batch)
     logits_batch, policy_batch, value_batch = net.forward(input_batch_flip_cat)
 
     target_batch = torch.cat((strategies0, strategies1), dim=0)
@@ -238,7 +243,7 @@ def step_cel (net, optimizer, scheduler, input_batch, strategies0, strategies1) 
 
 if __name__ == '__main__' :
     size = 3
-    batch_size = 2**10
+    policy_batch_size = 2**10
     total_steps = 2**10
     old_net = FCNet(3, 9, 1)
     net = FCNet(3, 9, 1)
@@ -249,7 +254,7 @@ if __name__ == '__main__' :
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     # for step in range(total_steps):
-    #     input_batch = Data.normal_batch(3, batch_size)
+    #     input_batch = Data.normal_batch(3, policy_batch_size)
     #     step_neurd(net, optimizer, scheduler, input_batch)
 
-    step_neurd_all_actions (net, optimizer, scheduler, Data.normal_batch(size, 2), eta=1, net_fixed=old_net, grad_clip=.2, value_loss_weight=5, entropy_loss_weight=0)
+    step_neurd_all_actions (net, optimizer, scheduler, Game.normal_batch(size, 2), eta=1, net_fixed=old_net, logit_threshold=.2, value_loss_weight=5, entropy_loss_weight=0)

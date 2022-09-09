@@ -1,4 +1,4 @@
-import Data
+import Game
 import Metric
 import Net
 import Inner
@@ -21,7 +21,7 @@ class RNaD ():
         if 'values' not in params:
             params['values'] = (-1, 0, 1)
         if 'game' not in params:
-            params['game'] = Data.Game(params['size'], params['values'])
+            params['game'] = Game.Game(params['size'], params['values'])
             params['game'].solve_filtered(unique=True, interior=True)
 
         # Net architecture
@@ -54,13 +54,15 @@ class RNaD ():
         # Learning
         if 'update' not in params:
             params['update'] = 'neurd'
+        if 'logit_threshold' not in params:
+            params['logit_threshold'] = 2
         if 'grad_clip' not in params:
             params['grad_clip'] = 1000
-        if 'batch_size' not in params:
-            params['batch_size'] = 2**6
+        if 'policy_batch_size' not in params:
+            params['policy_batch_size'] = 2**6
         if 'validation_batch' not in params:
             params['validation_batch'] = params['game'].matrices
-        params['validation_batch_size'] = params['validation_batch'].shape[0]
+        params['validation_policy_batch_size'] = params['validation_batch'].shape[0]
 
         # RNaD
         if 'outer_steps' not in params:
@@ -115,14 +117,16 @@ class RNaD ():
                 'log_lr_decay':log_lr_decay,
                 'eta':math.exp(outer_step*log_eta_decay) *self.params['eta_start'],
                 'log_eta_decay':log_eta_decay, # decay in the inner loop for smoothness
+                'logit_threshold':self.params['logit_threshold'],
                 'grad_clip':self.params['grad_clip'],
-                'batch_size':self.params['batch_size'],
+                'policy_batch_size':self.params['policy_batch_size'],
                 'total_steps':self.params['inner_steps'],
                 'validation_batch':self.params['validation_batch'],
                 'interval':self.params['interval'],
             }
 
-            print("outer_step: {}".format(outer_step))
+            print()
+            print("OUTER STEP: {}".format(outer_step))
             print("eta: {}, lr: {}".format(inner_loop_params['eta'], inner_loop_params['lr']))
 
             inner_loop = Inner.Inner(inner_loop_params)
@@ -143,21 +147,22 @@ if __name__ == "__main__":
     params = {
         'net_type' : 'FCNet', 
         'depth' : 2,
-        'width' : 81,
+        'width' : 128,
         'channels' : 9,
-        'dropout' : .5,
+        'dropout' : 0,
         'batch_norm' : True,
         'update' : 'neurd_all_actions',
-        'grad_clip' : 5,
-        'batch_size' : 2**4,
-        'outer_steps' : 2**8,
-        'inner_steps' : 2**12,
-        'interval' : 2**16 // 3,
-        'eta_start' : 10.0,
-        'eta_end' : 0.1,
-        'lr_start' : .004,
-        'lr_end' : 0.0008,
-        'value_loss_weight':5,
+        'logit_threshold' : 2,
+        'grad_clip':1000,
+        'policy_batch_size' : 2**8,
+        'outer_steps' : 2**12,
+        'inner_steps' : 2**10,
+        'interval' : 2**10 // 1,
+        'eta_start' : .5,
+        'eta_end' : .5,
+        'lr_start' : .01,
+        'lr_end' : 0.00001,
+        'value_loss_weight':4,
         'entropy_loss_weight':0,
     }
 

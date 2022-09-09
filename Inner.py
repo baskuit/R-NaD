@@ -1,5 +1,5 @@
 import Net
-import Data
+import Game
 import Metric
 
 import torch
@@ -21,7 +21,7 @@ class Inner () :
         if 'values' not in params:
             params['values'] = (-1, 0, 1)
         if 'game' not in params:
-            params['game'] = Data.Game(params['size'], params['values'])
+            params['game'] = Game.Game(params['size'], params['values'])
             params['game'].solve_filtered(unique=True, interior=True)
 
         # Net architecture
@@ -62,17 +62,19 @@ class Inner () :
             params['eta'] = 0 #important as non-zero will try to call forward on default net_fixed
         if 'log_eta_decay' not in params:
             params['log_eta_decay'] = 1
+        if 'logit_threshold' not in params:
+            params['logit_threshold'] = 2
         if 'grad_clip' not in params:
             params['grad_clip'] = 1000
-        if 'batch_size' not in params:
-            params['batch_size'] = 2**6
+        if 'policy_batch_size' not in params:
+            params['policy_batch_size'] = 2**6
         if 'total_steps' not in params:
             params['total_steps'] = 2**10
         if 'interval' not in params:
             params['interval'] = params['total_steps'] // 10
         if params['validation_batch'] is None:
-            params['validation_batch'] = Data.discrete_batch(params['size'], params['validation_batch_size'])
-        params['validation_batch_size'] = params['validation_batch'].shape[0]
+            params['validation_batch'] = Game.discrete_batch(params['size'], params['validation_policy_batch_size'])
+        params['validation_policy_batch_size'] = params['validation_batch'].shape[0]
         if 'optimizer' not in params:
             params['optimizer'] = torch.optim.SGD(params['net'].parameters(), lr=params['lr'])
         if 'scheduler' not in params:
@@ -85,7 +87,7 @@ class Inner () :
 
         for step in range(self.params['total_steps']):
 
-            input_batch, strategies0, strategies1 = self.params['game'].generate_input_batch(self.params['batch_size'])
+            input_batch, strategies0, strategies1 = self.params['game'].generate_input_batch(self.params['policy_batch_size'])
 
             if self.params['update'] == 'neurd' :
                 Net.step_neurd(
@@ -95,6 +97,21 @@ class Inner () :
                     input_batch=input_batch, 
                     eta=self.params['eta'], 
                     net_fixed=self.params['net_fixed'],
+                    logit_threshold=self.params['logit_threshold'],
+                    grad_clip=self.params['grad_clip'],
+                    value_loss_weight=self.params['value_loss_weight'],
+                    entropy_loss_weight=self.params['entropy_loss_weight'],
+                )
+
+            elif self.params['update'] == 'neurd_all_actions' :
+                Net.step_neurd_all_actions(
+                    net=self.params['net'], 
+                    optimizer=self.params['optimizer'], 
+                    scheduler=self.params['scheduler'], 
+                    input_batch=input_batch, 
+                    eta=self.params['eta'], 
+                    net_fixed=self.params['net_fixed'],
+                    logit_threshold=self.params['logit_threshold'],
                     grad_clip=self.params['grad_clip'],
                     value_loss_weight=self.params['value_loss_weight'],
                     entropy_loss_weight=self.params['entropy_loss_weight'],
@@ -110,27 +127,14 @@ class Inner () :
                     strategies1=strategies1
                 )
 
-            elif self.params['update'] == 'neurd_all_actions' :
-                Net.step_neurd_all_actions(
-                    net=self.params['net'], 
-                    optimizer=self.params['optimizer'], 
-                    scheduler=self.params['scheduler'], 
-                    input_batch=input_batch, 
-                    eta=self.params['eta'], 
-                    net_fixed=self.params['net_fixed'],
-                    grad_clip=self.params['grad_clip'],
-                    value_loss_weight=self.params['value_loss_weight'],
-                    entropy_loss_weight=self.params['entropy_loss_weight'],
-                )
-
             if step % self.params['interval'] == 0:
                 self.params['net'].eval()
                 checkpoint_data = {}
 
-                validation_logits_batch, validation_policy_batch, validation_value_batch = self.params['net'](Data.flip_cat(self.params['validation_batch']))
+                validation_logits_batch, validation_policy_batch, validation_value_batch = self.params['net'](Game.flip_cat(self.params['validation_batch']))
 
-                s0 = Data.first_half(validation_policy_batch)
-                s1 = Data.second_half(validation_policy_batch)
+                s0 = Game.first_half(validation_policy_batch)
+                s1 = Game.second_half(validation_policy_batch)
                 
                 checkpoint_data['expl'] = torch.mean(Metric.expl(self.params['validation_batch'], s0, s1)).item()
                 checkpoint_data['policy'] = validation_policy_batch
@@ -150,7 +154,7 @@ class Inner () :
 #         'size' : 3,
 #         # 'lr' : .001,
 #         # 'log_lr_decay' : 0,
-#         # 'batch_size' : int(math.exp(2*random.random()+2)),
+#         # 'policy_batch_size' : int(math.exp(2*random.random()+2)),
 #         # 'depth' : random.randint(1, 4),
 #         # 'width' : int(math.exp(2+3*random.random())),
 #         }
@@ -169,11 +173,11 @@ class Inner () :
 #     net = Net.FCNet(size=3, width=81, depth=2, dropout=.5)
 
 #     validation_batch = M.matrices
-#     validation_batch_size = validation_batch.shape[0]    
+#     validation_policy_batch_size = validation_batch.shape[0]    
 #     generator = hyperparameter_generator(total_frames)
 
 #     print('Total Frames: {}'.format(total_frames))
-#     print('Validation Batch Size: {}'.format(validation_batch_size))
+#     print('Validation Batch Size: {}'.format(validation_policy_batch_size))
 #     print('________________')
 
 #     data = []
@@ -192,7 +196,7 @@ class Inner () :
 #         loop_params['net_fixed'] = net
 #         loop_params['eta'] = math.exp(-_/10)
 #         loop_params['lr'] = .001
-#         loop_params['grad_clip'] = 1000
+#         loop_params['logit_threshold'] = 1000
 
 #         loop = Inner(loop_params)
 #         loop.run()
