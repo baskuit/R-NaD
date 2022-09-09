@@ -74,9 +74,14 @@ class Inner () :
             params['total_steps'] = 2**10
         if 'interval' not in params:
             params['interval'] = params['total_steps'] // 10
-        if params['validation_batch'] is None:
-            params['validation_batch'] = Game.discrete_batch(params['size'], params['validation_policy_batch_size'])
-        params['validation_policy_batch_size'] = params['validation_batch'].shape[0]
+        if 'validation_batch_size' not in params:
+            params['validation_batch_size'] = None
+        if 'validation_batch' not in params:
+            if params['validation_batch_size'] is None:
+                params['validation_batch'] = params['game'].matrices
+                params['validation_payoffs'] = params['game'].payoffs
+            else:
+                pass # TODO
         if 'optimizer' not in params:
             params['optimizer'] = torch.optim.SGD(params['net'].parameters(), lr=params['lr'])
         if 'scheduler' not in params:
@@ -89,7 +94,7 @@ class Inner () :
 
         for step in range(self.params['total_steps']):
 
-            input_batch, strategies0, strategies1 = self.params['game'].generate_input_batch(self.params['policy_batch_size'])
+            input_batch, strategies0, strategies1, payoffs = self.params['game'].generate_input_batch(self.params['policy_batch_size'])
 
             if self.params['update'] == 'neurd' :
                 Net.step_neurd(
@@ -140,14 +145,29 @@ class Inner () :
                 s1 = Game.second_half(validation_policy_batch)
                 
                 checkpoint_data['expl'] = torch.mean(Metric.expl(self.params['validation_batch'], s0, s1)).item()
+                validation_payoffs_flip_cat = torch.cat((self.params['validation_payoffs'], -self.params['validation_payoffs']), dim=0)
+                checkpoint_data['value_loss'] = torch.mean((validation_value_batch - validation_payoffs_flip_cat)**2)
                 checkpoint_data['policy'] = validation_policy_batch
 
                 self.checkpoints[step] = checkpoint_data
                 self.params['net'].train()
-            
+                
+                print()
                 print("checkpoint: {}".format(step))
                 print("max abs logit: {}".format(torch.max(torch.abs(validation_logits_batch)).item()))
                 print('expl: {}'.format(checkpoint_data['expl']))
+                print('value loss: {}'.format(checkpoint_data['value_loss']))
+
+    def print_params (self) :
+        for key, value in self.params.items() :
+            if isinstance(value, int) or isinstance(value, str) :
+                print('{}: {}'.format(key, value))
+            if torch.is_tensor(value) :
+                if torch.numel(value) < 27 :
+                    print('{}:'.format(key))
+                    print(value)
+                else:
+                    print('{}: {}'.format(key, value.shape))
 
 
 

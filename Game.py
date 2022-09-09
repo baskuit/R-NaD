@@ -13,6 +13,7 @@ class Game () :
         self.matrices = None
         self.strategies0 = None
         self.strategies1 = None
+        self.payoffs = None
         self.expanded = False
     
     def generate (self, current=[], values=[-1, 0, 1]) :
@@ -26,6 +27,10 @@ class Game () :
                     yield __
 
     def solve_filtered (self, unique=True, interior=True) :
+
+        print('Generating Game--- size:{}, values:{}, unique:{}, interior:{}'.
+            format(self.size, self.values, unique, interior))
+
         self.matrices = torch.cat(list(self.generate([], self.values)), dim=0)
     
         self.matrices, strategy_list = solve_batch_filtered(self.matrices, unique, interior)
@@ -37,11 +42,18 @@ class Game () :
         self.strategies0 = strategies[0]
         self.strategies1 = strategies[1]
 
+        self.payoffs = torch.matmul(
+            torch.matmul(self.strategies0.view(-1, 1, 3), self.matrices),
+            self.strategies1.view(-1, 3, 1)
+        ).squeeze(1)
+
+        print('Game Generated--- {} matrices'.format(self.matrices.shape[0]))
+
     def generate_input_batch (self, batch_size) :
 
         m = self.matrices.shape[0]
         idx = torch.randint(0, m-1, (batch_size,))
-        return self.matrices[idx].detach(), self.strategies0[idx], self.strategies1[idx]
+        return self.matrices[idx].detach(), self.strategies0[idx], self.strategies1[idx], self.payoffs[idx]
 
     # TODO if/when needed
     def save (self) :
@@ -139,7 +151,4 @@ if __name__ == '__main__':
 
     x = Game(3)
     x.solve_filtered(unique=True, interior=True)
-    input_batch, strategy0, strategy1  = x.generate_input_batch(2)
-    print(input_batch)
-    print(strategy0)
-    print(strategy1)
+    input_batch, strategy0, strategy1, payoffs  = x.generate_input_batch(5)

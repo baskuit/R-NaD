@@ -62,7 +62,8 @@ class RNaD ():
             params['policy_batch_size'] = 2**6
         if 'validation_batch' not in params:
             params['validation_batch'] = params['game'].matrices
-        params['validation_policy_batch_size'] = params['validation_batch'].shape[0]
+            params['validation_payoffs'] = params['game'].payoffs
+        params['validation_batch_size'] = params['validation_batch'].shape[0]
 
         # RNaD
         if 'outer_steps' not in params:
@@ -93,11 +94,11 @@ class RNaD ():
         if (self.terminated):
             raise Exception('run() called on terminated RNaD object')
 
+        print()
         print("Begining RNaD run, main params:")
         print("outer_steps: {}, inner_steps: {}".format(params['outer_steps'], params['inner_steps']))
         print("eta_start: {}, eta_end: {}".format(params['eta_start'], params['eta_end']))
         print("lr_start: {}, lr_end: {}".format(params['lr_start'], params['lr_end']))
-        print()
 
         log_eta_decay = (math.log(self.params['eta_end']) - math.log(self.params['eta_start'])) / self.params['outer_steps']
         log_lr_decay = (math.log(self.params['lr_end']) - math.log(self.params['lr_start'])) / self.params['outer_steps']
@@ -123,14 +124,15 @@ class RNaD ():
                 'value_batch_size':self.params['value_batch_size'],
                 'total_steps':self.params['inner_steps'],
                 'validation_batch':self.params['validation_batch'],
+                'validation_payoffs':self.params['validation_payoffs'],
                 'interval':self.params['interval'],
             }
 
             print()
             print("OUTER STEP: {}".format(outer_step))
-            print("eta: {}, lr: {}".format(inner_loop_params['eta'], inner_loop_params['lr']))
 
             inner_loop = Inner.Inner(inner_loop_params)
+            inner_loop.print_params()
             inner_loop.run()
             checkpoints = inner_loop.checkpoints
 
@@ -159,14 +161,17 @@ if __name__ == "__main__":
         'value_batch_size' : 2**5,
         'outer_steps' : 2**12,
         'inner_steps' : 2**16,
-        'interval' : 2**16 // 2,
+        'interval' : 2**16 // 20,
         'eta_start' : 5,
         'eta_end' : 5,
         'lr_start' : .001,
         'lr_end' : 0.0001,
-        'value_loss_weight':2,
+        'value_loss_weight':10,
         'entropy_loss_weight':0,
     }
+
+    params['game'] = Game.Game(3, [-1, 0, 1])
+    params['game'].solve_filtered(unique=True, interior=False)
 
     x = RNaD(params)  
     x.run()
