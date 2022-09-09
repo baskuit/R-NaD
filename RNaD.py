@@ -146,15 +146,14 @@ class RNaD ():
                 inner_loop.print_params()
 
             results = None
-            # try:
-            #     inner_loop.run()
-            #     results = inner_loop.results
-            # except Exception as e:
-            #     print("INNER LOOP EXCEPTION")
-            #     print(e)
-            #     break
-            inner_loop.run()
-            results = inner_loop.results
+            try:
+                inner_loop.run()
+                results = inner_loop.results
+            except Exception as e:
+                print("INNER LOOP EXCEPTION")
+                print(e)
+                break
+
             self.outer_step_data.append(results)
 
 
@@ -222,9 +221,9 @@ def param_generator (total_steps=2**22) :
             'grad_clip':20,
             'policy_batch_size' : policy_batch_size,
             'value_batch_size' : value_batch_size,
-            'outer_steps' : 2,
-            'inner_steps' : 100,
-            'checkpoint_frequency' : 1,
+            'outer_steps' : outer_steps,
+            'inner_steps' : inner_steps,
+            'checkpoint_frequency' : 100,
             'eta_start' : eta,
             'eta_end' : eta,
             'lr_start' : lr,
