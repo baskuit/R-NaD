@@ -1,3 +1,4 @@
+from email import policy
 import Game
 import Metric
 import Net
@@ -7,6 +8,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import random
+
+import matplotlib.pyplot
 
 # Implementation of Regularized Nash Dynamics to approximate equilibrium for collections of zero-sum matrices.
 # The update rule is single-action NeuRD, although PG and all-action updates may also be implemented
@@ -70,8 +74,8 @@ class RNaD ():
             params['outer_steps'] = 2**7
         if 'inner_steps' not in params:
             params['inner_steps'] = 2**16
-        if 'interval' not in params:
-            params['interval'] = params['inner_steps'] // 3
+        if 'checkpoint_frequency' not in params:
+            params['checkpoint_frequency'] = 100
         if 'eta_start' not in params:
             params['eta_start'] = 1.0
         if 'eta_end' not in params:
@@ -85,7 +89,10 @@ class RNaD ():
         if 'entropy_loss_weight' not in params:
             params['entropy_loss_weight'] = 1 
 
-        self.outer_step_data = {}
+        if 'verbose' not in params:
+            params['verbose'] = True
+
+        self.outer_step_data = []
 
         self.params = params
         self.terminated = False
@@ -94,16 +101,18 @@ class RNaD ():
         if (self.terminated):
             raise Exception('run() called on terminated RNaD object')
 
-        print()
-        print("Begining RNaD run, main params:")
-        print("outer_steps: {}, inner_steps: {}".format(params['outer_steps'], params['inner_steps']))
-        print("eta_start: {}, eta_end: {}".format(params['eta_start'], params['eta_end']))
-        print("lr_start: {}, lr_end: {}".format(params['lr_start'], params['lr_end']))
+        if self.params['verbose']:
+            print("\n---- R-NaD ----")
+            self.print_params()
+
 
         log_eta_decay = (math.log(self.params['eta_end']) - math.log(self.params['eta_start'])) / self.params['outer_steps']
         log_lr_decay = (math.log(self.params['lr_end']) - math.log(self.params['lr_start'])) / self.params['outer_steps']
 
         for outer_step in range(self.params['outer_steps']):
+
+            if self.params['verbose']:
+                print("\n    OUTER STEP: {}".format(outer_step))
 
             inner_loop_params = {
                 'size':self.params['size'],
@@ -125,16 +134,35 @@ class RNaD ():
                 'total_steps':self.params['inner_steps'],
                 'validation_batch':self.params['validation_batch'],
                 'validation_payoffs':self.params['validation_payoffs'],
-                'interval':self.params['interval'],
+                'interval':self.params['inner_steps']//self.params['checkpoint_frequency'],
+                'verbose':self.params['verbose'],
+                'tab':'        '
             }
 
-            print()
-            print("OUTER STEP: {}".format(outer_step))
 
             inner_loop = Inner.Inner(inner_loop_params)
-            inner_loop.print_params()
+
+            if self.params['verbose']:
+                inner_loop.print_params()
+
+            results = None
+            # try:
+            #     inner_loop.run()
+            #     results = inner_loop.results
+            # except Exception as e:
+            #     print("INNER LOOP EXCEPTION")
+            #     print(e)
+            #     break
             inner_loop.run()
-            checkpoints = inner_loop.checkpoints
+            results = inner_loop.results
+            self.outer_step_data.append(results)
+
+
+            if self.params['verbose']:
+                print('\n    min_expl: {}'.format(results['min_expl']))
+                print('    value_loss: {}'.format(results['min_expl_asso_value_loss']))
+
+            
 
             if self.params['net_type'] == 'FCNet' :
                 self.params['net_fixed'] = Net.FCNet(size=self.params['size'], width=self.params['width'], depth=self.params['depth'], dropout=self.params['dropout'])
@@ -143,37 +171,90 @@ class RNaD ():
             self.params['net_fixed'].load_state_dict(self.params['net'].state_dict())
 
         self.terminated = True
+        min_expl = min(self.outer_step_data, key=lambda results: results['min_expl'])
+        print(min_expl)
+
+    def print_params (self) :
+        for key, value in self.params.items() :
+            if isinstance(value, int) or isinstance(value, str) :
+                print('{}: {}'.format(key, value))
+            if torch.is_tensor(value) :
+                if torch.numel(value) < 27 :
+                    print('{}:'.format(key))
+                    print(value)
+                else:
+                    print('{}: {}'.format(key, value.shape))
+
+
+    def save_graph (self) :
+        if not self.terminated:
+            raise Exception('save_graph() called on non-terminated RNaD object')
+
+
+def param_generator (total_steps=2**22) :
+
+
+    for _ in range(2**20) :
+
+        inner_steps = int(2**(10+9*random.random()))
+        outer_steps = total_steps // inner_steps
+        eta = 2**(-4+7*random.random())
+        lr = 2**(-14+10*random.random())
+        value_loss_weight = 2**(-3+6*random.random())
+        entropy_loss_weight = 2**(-3+3*random.random())
+
+        x = 7*random.random()
+        y = x*random.random()
+        policy_batch_size_exp = 3+x
+        value_batch_size_exp =  3+y
+        policy_batch_size = int(2**policy_batch_size_exp)
+        value_batch_size = int(2**value_batch_size_exp)
+        
+        params = {
+            'net_type' : 'FCNet', 
+            'depth' : 2,
+            'width' : 128,
+            'channels' : 9,
+            'dropout' : .5,
+            'batch_norm' : True,
+            'update' : 'neurd_all_actions',
+            'logit_threshold' : 2*8*random.random(),
+            'grad_clip':20,
+            'policy_batch_size' : policy_batch_size,
+            'value_batch_size' : value_batch_size,
+            'outer_steps' : 2,
+            'inner_steps' : 100,
+            'checkpoint_frequency' : 1,
+            'eta_start' : eta,
+            'eta_end' : eta,
+            'lr_start' : lr,
+            'lr_end' : lr/10,
+            'value_loss_weight':value_loss_weight,
+            'entropy_loss_weight':entropy_loss_weight,
+
+            'verbose':False
+        }
+
+        yield params
+
+
+
+
+
+
+
 
 
 if __name__ == "__main__":
 
-    params = {
-        'net_type' : 'FCNet', 
-        'depth' : 2,
-        'width' : 128,
-        'channels' : 9,
-        'dropout' : .5,
-        'batch_norm' : True,
-        'update' : 'neurd_all_actions',
-        'logit_threshold' : 2,
-        'grad_clip':20,
-        'policy_batch_size' : 2**8,
-        'value_batch_size' : 2**5,
-        'outer_steps' : 2**12,
-        'inner_steps' : 2**16,
-        'interval' : 2**16 // 20,
-        'eta_start' : 5,
-        'eta_end' : 5,
-        'lr_start' : .001,
-        'lr_end' : 0.0001,
-        'value_loss_weight':10,
-        'entropy_loss_weight':0,
-    }
+    total_steps = 2**22
 
-    params['game'] = Game.Game(3, [-1, 0, 1])
-    params['game'].solve_filtered(unique=True, interior=False)
+    gen = param_generator(total_steps)
 
-    x = RNaD(params)  
-    x.run()
+    game = Game.Game(3, [-1, 0, 1])
+    game.solve_filtered(unique=True, interior=False)
 
-
+    for params in gen:
+        params['game'] = game
+        x = RNaD(params)  
+        x.run()

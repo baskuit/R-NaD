@@ -13,7 +13,7 @@ class Inner () :
     def __init__ (self, params={}) :
 
         self.params = params
-        self.checkpoints = {}
+        self.results = {}
 
         # Game
         if 'size' not in params:
@@ -87,10 +87,17 @@ class Inner () :
         if 'scheduler' not in params:
             params['scheduler'] = torch.optim.lr_scheduler.LambdaLR(params['optimizer'], self.lr_lambda)
 
+        if 'verbose' not in params:
+            params['verbose'] = True
+        if 'tab' not in params:
+            params['tab'] = ''
+
     def lr_lambda(self, step):
         return self.params['lr'] * math.exp(self.params['log_lr_decay'] * step / (self.params['total_steps'] + 1))
 
     def run (self) :
+
+        checkpoints = {}
 
         for step in range(self.params['total_steps']):
 
@@ -135,7 +142,8 @@ class Inner () :
                     strategies1=strategies1
                 )
 
-            if step % self.params['interval'] == 0:
+            if step % self.params['interval'] == 0 or step + 1 == self.params['total_steps']:
+
                 self.params['net'].eval()
                 checkpoint_data = {}
 
@@ -146,28 +154,41 @@ class Inner () :
                 
                 checkpoint_data['expl'] = torch.mean(Metric.expl(self.params['validation_batch'], s0, s1)).item()
                 validation_payoffs_flip_cat = torch.cat((self.params['validation_payoffs'], -self.params['validation_payoffs']), dim=0)
-                checkpoint_data['value_loss'] = torch.mean((validation_value_batch - validation_payoffs_flip_cat)**2)
-                checkpoint_data['policy'] = validation_policy_batch
+                checkpoint_data['value_loss'] = torch.mean((validation_value_batch - validation_payoffs_flip_cat)**2).item()
+                # checkpoint_data['policy'] = validation_policy_batch.clone().detach()
 
-                self.checkpoints[step] = checkpoint_data
+                checkpoints[step] = checkpoint_data
                 self.params['net'].train()
                 
-                print()
-                print("checkpoint: {}".format(step))
-                print("max abs logit: {}".format(torch.max(torch.abs(validation_logits_batch)).item()))
-                print('expl: {}'.format(checkpoint_data['expl']))
-                print('value loss: {}'.format(checkpoint_data['value_loss']))
+                if self.params['verbose']:
+                    print()
+                    print(self.params['tab']+"checkpoint: {}".format(step))
+                    print(self.params['tab']+"max abs logit: {}".format(torch.max(torch.abs(validation_logits_batch)).item()))
+                    print(self.params['tab']+'expl: {}'.format(checkpoint_data['expl']))
+                    print(self.params['tab']+'value loss: {}'.format(checkpoint_data['value_loss']))
+
+        # inner loop finished
+
+        checkpoint_keys = list(checkpoints.keys())
+        # checkpoint_keys.sort()
+        
+        min_expl_key = min(checkpoint_keys, key=lambda key:checkpoints[key]['expl'])
+        self.results['min_expl'] = checkpoints[min_expl_key]['expl']
+        self.results['min_expl_asso_value_loss'] = checkpoints[min_expl_key]['value_loss']
+        self.results['checkpoints'] = checkpoints
+
+
 
     def print_params (self) :
         for key, value in self.params.items() :
             if isinstance(value, int) or isinstance(value, str) :
-                print('{}: {}'.format(key, value))
+                print(self.params['tab']+'{}: {}'.format(key, value))
             if torch.is_tensor(value) :
                 if torch.numel(value) < 27 :
-                    print('{}:'.format(key))
-                    print(value)
+                    print(self.params['tab']+'{}:'.format(key))
+                    print(self.params['tab']+value)
                 else:
-                    print('{}: {}'.format(key, value.shape))
+                    print(self.params['tab']+'{}: {}'.format(key, value.shape))
 
 
 
