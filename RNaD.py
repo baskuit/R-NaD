@@ -175,7 +175,7 @@ class RNaD ():
 
     def print_params (self) :
         for key, value in self.params.items() :
-            if isinstance(value, int) or isinstance(value, str) :
+            if isinstance(x, (int, float, complex, str, bool)):
                 print('{}: {}'.format(key, value))
             if torch.is_tensor(value) :
                 if torch.numel(value) < 27 :
