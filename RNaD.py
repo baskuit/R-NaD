@@ -169,20 +169,27 @@ class RNaD ():
                 self.params['net_fixed'] = Net.ConvNet(size=self.params['size'], channels=self.params['channels'], depth=self.params['depth'], batch_norm=self.params['batch_norm'])
             self.params['net_fixed'].load_state_dict(self.params['net'].state_dict())
 
+
+
         self.terminated = True
-        data = min(self.outer_step_data, key=lambda results: results['min_expl'])
-        print(data['min_expl'], data['min_expl_asso_value_loss'])
+
+        if len(data) > 0:
+            data = min(self.outer_step_data, key=lambda results: results['min_expl'])
+            print(data['min_expl'], data['min_expl_asso_value_loss'])
+        else:
+            print('No outer steps, no data')
 
     def print_params (self) :
         for key, value in self.params.items() :
-            if isinstance(x, (int, float, complex, str, bool)):
-                print('{}: {}'.format(key, value))
             if torch.is_tensor(value) :
                 if torch.numel(value) < 27 :
                     print('{}:'.format(key))
                     print(value)
                 else:
                     print('{}: {}'.format(key, value.shape))
+            else:
+                if key not in ('net', 'net_fixed', 'game'):
+                    print('{}: {}'.format(key, value))
 
 
     def save_graph (self) :
@@ -217,8 +224,8 @@ def param_generator (total_steps=2**22) :
             'dropout' : .5,
             'batch_norm' : True,
             'update' : 'neurd_all_actions',
-            'logit_threshold' : 2*8*random.random(),
-            'grad_clip':20,
+            'logit_threshold' : 2+8*random.random(),
+            'grad_clip':2**(5+5*random.random()),
             'policy_batch_size' : policy_batch_size,
             'value_batch_size' : value_batch_size,
             'outer_steps' : outer_steps,
@@ -256,5 +263,6 @@ if __name__ == "__main__":
     for params in gen:
         params['game'] = game
         x = RNaD(params)
+        print()
         x.print_params()
         x.run()
