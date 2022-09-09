@@ -164,7 +164,7 @@ class ConvNet (nn.Module):
 
 def step_neurd_all_actions (
     net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, 
-    logit_threshold=2, value_loss_weight=1, entropy_loss_weight=1, grad_clip=1000) :
+    logit_threshold=2, value_loss_weight=1, entropy_loss_weight=1, grad_clip=1000, value_batch_size=1) :
 
     policy_batch_size, size = input_batch.shape[:2]
     input_batch_flip_cat = Game.flip_cat(input_batch)
@@ -206,7 +206,9 @@ def step_neurd_all_actions (
     regrets_clipped = (can_decrease * regrets_negative + can_increase * regrets_positive).detach()
 
     policy_loss = torch.mean(torch.sum(logits_batch * regrets_clipped, dim=1))
-    value_loss = torch.mean((value_batch - rewards_observed)**2)
+    value_mse = (value_batch - rewards_observed)**2
+    assert(value_batch_size <= policy_batch_size)
+    value_loss = torch.mean(value_mse[:value_batch_size])
     entropy_loss = F.cross_entropy(policy_batch, policy_batch)
 
     loss = policy_loss + value_loss_weight * value_loss + entropy_loss_weight * entropy_loss

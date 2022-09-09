@@ -55,19 +55,21 @@ class Inner () :
         if 'value_loss_weight' not in params:
             params['value_loss_weight'] = 1 
         if 'entropy_loss_weight' not in params:
-            params['entropy_loss_weight'] = 1 
+            params['entropy_loss_weight'] = 1
         if 'log_lr_decay' not in params:
             params['log_lr_decay'] = 0
         if 'eta' not in params:
             params['eta'] = 0 #important as non-zero will try to call forward on default net_fixed
         if 'log_eta_decay' not in params:
-            params['log_eta_decay'] = 1
+            params['log_eta_decay'] = 0
         if 'logit_threshold' not in params:
             params['logit_threshold'] = 2
         if 'grad_clip' not in params:
             params['grad_clip'] = 1000
         if 'policy_batch_size' not in params:
-            params['policy_batch_size'] = 2**6
+            params['policy_batch_size'] = 2**8
+        if 'value_batch_size' not in params:
+            params['value_batch_size'] = 2**5
         if 'total_steps' not in params:
             params['total_steps'] = 2**10
         if 'interval' not in params:
@@ -115,6 +117,7 @@ class Inner () :
                     grad_clip=self.params['grad_clip'],
                     value_loss_weight=self.params['value_loss_weight'],
                     entropy_loss_weight=self.params['entropy_loss_weight'],
+                    value_batch_size=self.params['value_batch_size'],
                 )
 
             elif self.params['update'] == 'cel':
