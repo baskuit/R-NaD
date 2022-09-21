@@ -173,7 +173,7 @@ class RNaD ():
 
         self.terminated = True
 
-        if len(data) > 0:
+        if len(self.outer_step_data) > 0:
             data = min(self.outer_step_data, key=lambda results: results['min_expl'])
             print(data['min_expl'], data['min_expl_asso_value_loss'])
         else:
