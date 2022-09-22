@@ -83,7 +83,7 @@ class Inner () :
             else:
                 pass # TODO
         if 'optimizer' not in params:
-            params['optimizer'] = torch.optim.SGD(params['net'].parameters(), lr=params['lr'])
+            params['optimizer'] = torch.optim.Adam(params['net'].parameters(), lr=params['lr'])
         if 'scheduler' not in params:
             params['scheduler'] = torch.optim.lr_scheduler.LambdaLR(params['optimizer'], self.lr_lambda)
 

@@ -135,7 +135,7 @@ class RNaD ():
                 'validation_batch':self.params['validation_batch'],
                 'validation_payoffs':self.params['validation_payoffs'],
                 'interval':self.params['inner_steps']//self.params['checkpoint_frequency'],
-                'verbose':self.params['verbose'],
+                'verbose':False,
                 'tab':'        '
             }
 
@@ -205,13 +205,14 @@ def param_generator (total_steps=2**22) :
         inner_steps = int(2**(10+9*random.random()))
         outer_steps = total_steps // inner_steps
         eta = 2**(-4+7*random.random())
-        lr = 2**(-14+10*random.random())
+        eta = .2
+        lr = 2**(-15+5*random.random())
         value_loss_weight = 2**(-3+6*random.random())
         entropy_loss_weight = 2**(-3+3*random.random())
 
-        x = 7*random.random()
+        x = 6*random.random()
         y = x*random.random()
-        policy_batch_size_exp = 3+x
+        policy_batch_size_exp = 10+x
         value_batch_size_exp =  3+y
         policy_batch_size = int(2**policy_batch_size_exp)
         value_batch_size = int(2**value_batch_size_exp)
@@ -226,23 +227,22 @@ def param_generator (total_steps=2**22) :
             'update' : 'neurd_all_actions',
             'logit_threshold' : 2+8*random.random(),
             'grad_clip':2**(5+5*random.random()),
-            'policy_batch_size' : policy_batch_size,
-            'value_batch_size' : value_batch_size,
+            'policy_batch_size' : 2**11,
+            'value_batch_size' : 2**11,
             'outer_steps' : outer_steps,
             'inner_steps' : inner_steps,
             'checkpoint_frequency' : 100,
             'eta_start' : eta,
             'eta_end' : eta,
             'lr_start' : lr,
-            'lr_end' : lr/10,
-            'value_loss_weight':value_loss_weight,
-            'entropy_loss_weight':entropy_loss_weight,
+            'lr_end' : lr,
+            'value_loss_weight':1,
+            'entropy_loss_weight':0,
 
-            'verbose':False
+            'verbose':True
         }
 
         yield params
-
 
 
 
@@ -258,7 +258,7 @@ if __name__ == "__main__":
     gen = param_generator(total_steps)
 
     game = Game.Game(3, [-1, 0, 1])
-    game.solve_filtered(unique=True, interior=False)
+    game.solve_filtered(unique=True, interior=True)
 
     for params in gen:
         params['game'] = game

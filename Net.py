@@ -54,7 +54,7 @@ class FCNet (nn.Module):
 
 
 class CrossConv (nn.Module) :
-
+ 
     def __init__ (self, size, in_channels, out_channels) :
         super().__init__()
         self.size = size
@@ -114,51 +114,51 @@ class ConvNet (nn.Module):
 
 
 
-# TODO Clipping and naming
-# def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, logit_threshold=1000) :
 
-#     policy_batch_size, size = input_batch.shape[:2]
-#     # [H, H, .. H]
-#     # [H, H, .. H, -I, -I, ..-I]
-#     # flip cat spilts each matrix game into 2 states ( I is H transposed )
-#     input_batch_flip_cat = Data.flip_cat(input_batch)
-#     logits_batch, policy_batch, value_batch = net.forward(input_batch_flip_cat)
+def step_neurd (net, optimizer, scheduler, input_batch, eta=0, net_fixed=None, logit_threshold=1000) :
+
+    policy_batch_size, size = input_batch.shape[:2]
+    # [H, H, .. H]
+    # [H, H, .. H, -I, -I, ..-I]
+    # flip cat spilts each matrix game into 2 states ( I is H transposed )
+    input_batch_flip_cat = Game.flip_cat(input_batch)
+    logits_batch, policy_batch, value_batch = net.forward(input_batch_flip_cat)
     
-#     actions = torch.squeeze(torch.multinomial(policy_batch, num_samples=1), dim=-1)
-#     action_logits = logits_batch[torch.arange(2*policy_batch_size), actions]
-#     pi = policy_batch.detach()[torch.arange(2*policy_batch_size), actions]
+    actions = torch.squeeze(torch.multinomial(policy_batch, num_samples=1), dim=-1)
+    action_logits = logits_batch[torch.arange(2*policy_batch_size), actions]
+    pi = policy_batch.detach()[torch.arange(2*policy_batch_size), actions]
 
-#     A = actions[:policy_batch_size]
-#     B = actions[policy_batch_size:]
-#     player_one_rewards = input_batch[torch.arange(policy_batch_size), A][torch.arange(policy_batch_size), B]
-#     # entries of matrix corresponding to pairs of selected actions
+    A = actions[:policy_batch_size]
+    B = actions[policy_batch_size:]
+    player_one_rewards = input_batch[torch.arange(policy_batch_size), A][torch.arange(policy_batch_size), B]
+    # entries of matrix corresponding to pairs of selected actions
 
-#     if eta > 0:
-#         with torch.no_grad():
-#             logits_batch_, policy_batch_, value_batch_ = net_fixed.forward(input_batch_flip_cat)
-#         mu = policy_batch_.detach()[torch.arange(2*policy_batch_size), actions]
-#         eta_log = eta * (torch.log(pi) - torch.log(mu))
-#         player_one_rewards -= Data.first_half(eta_log)
-#         player_one_rewards += Data.second_half(eta_log)
+    if eta > 0:
+        with torch.no_grad():
+            logits_batch_, policy_batch_, value_batch_ = net_fixed.forward(input_batch_flip_cat)
+        mu = policy_batch_.detach()[torch.arange(2*policy_batch_size), actions]
+        eta_log = eta * (torch.log(pi) - torch.log(mu))
+        player_one_rewards -= Game.first_half(eta_log)
+        player_one_rewards += Game.second_half(eta_log)
 
-#     rewards = torch.cat((player_one_rewards, -player_one_rewards), dim=0)
+    rewards = torch.cat((player_one_rewards, -player_one_rewards), dim=0)
 
-#     regrets = (value_batch.squeeze(dim=1) - rewards).detach().clone()
+    regrets = (value_batch.squeeze(dim=1) - rewards).detach().clone()
 
-#     policy_loss = torch.mean(action_logits * regrets / pi)
+    policy_loss = torch.mean(action_logits * regrets / pi)
 
-#     value_loss = torch.mean(torch.pow(value_batch - rewards, 2))
+    value_loss = torch.mean(torch.pow(value_batch - rewards, 2))
 
-#     entropy_loss = F.cross_entropy(policy_batch, policy_batch)
+    entropy_loss = F.cross_entropy(policy_batch, policy_batch)
 
-#     loss = policy_loss + value_loss + entropy_loss
-#     loss.backward()
-#     # for _ in net.parameters():
-#     #     print(_.grad)
-#     nn.utils.clip_grad_norm_(net.parameters(), logit_threshold) #TODO grad clip param
-#     optimizer.step()
-#     scheduler.step()
-#     optimizer.zero_grad()
+    loss = policy_loss + value_loss + entropy_loss
+    loss.backward()
+    # for _ in net.parameters():
+    #     print(_.grad)
+    nn.utils.clip_grad_norm_(net.parameters(), logit_threshold) #TODO grad clip param
+    optimizer.step()
+    scheduler.step()
+    optimizer.zero_grad()
 
 
 
