@@ -12,12 +12,12 @@ import pygambit
 
 class Info () :
 
-    def __init__ (self, idx=1, depth=0, values=[-1, 1], rows=1, cols=0) :
+    def __init__ (self, idx=1, depth=0, values=[-1, 1], n_actions=1) :
 
         self.idx = idx  
         self.depth = depth
         self.values = values
-        self.rows = rows
+        self.n_actions = n_actions
 
 class Tree () :
 
@@ -44,22 +44,53 @@ class Tree () :
         self.states = torch.zeros((1, params['max_actions'], params['max_actions'], 2), device=params['device'], dtype=torch.float)
         self.states[0, 0, 0, 1] = 1.
 
-        self.transition_probs = torch.zeros((1, params['max_actions'], params['max_actions'], params['max_transitions']), device=params['device'], dtype=torch.int)
+        # create absorbing state at index=0 to represent terminal states
+        self.transition_probs = torch.zeros((1, params['max_actions'], params['max_actions'], params['max_transitions']), device=params['device'], dtype=torch.float)
         self.transition_indexes = torch.zeros((1, params['max_actions'], params['max_actions'], params['max_transitions']), device=params['device'], dtype=torch.int)
         self.transition_probs[0, 0, 0, 0] = 1.
 
         self.turn_ = 1
 
     # Randomly generate a game tree and solve it recursively
-    def generate (self, info) :
+    def _generate (self, info) :
 
-        if info.depth == 0:
+        # Depth is max possible distance from terminal state
+        # so depth = 1
 
-            pass
+        # TODO Stochastics. 
 
-        else:
+        s = torch.zeros((1, self.param['max_actions'], self.param['max_actions'], 2), device=self.param['device'], dtype=torch.float)
+        p = torch.zeros((1, self.param['max_actions'], self.param['max_actions'], self.param['max_trasitions']), device=self.param['device'], dtype=torch.float)
+        i = torch.zeros((1, self.param['max_actions'], self.param['max_actions'], self.param['max_trasitions']), device=self.param['device'], dtype=torch.int)
 
-            pass
+        
+
+        if info.depth > 0:
+
+            idx_ = info.idx # incremented herein
+
+            s[0, :info.n_actions, :info.n_actions, 1] = 1. # action mask
+
+            for i in info.n_actions:
+                for j in info.n_actions:
+                    
+                    # get new depth etc for child
+                    depth_ = self.params['depth_lambda'](info.depth)
+                    n_actions_ = self.params['n_actions_lambda'](info.n_actions)
+
+                    if depth_ > 0:
+                        idx_ += 1
+
+                        info_ = Info(idx_, depth_, info.values, n_actions_)
+                        
+                        t_ = self._generate(info_)
+                    else:
+                        pass
+                        #child is terminal, go to absorbing state
+
+            return None
+
+
 
     def save (self) :
 
