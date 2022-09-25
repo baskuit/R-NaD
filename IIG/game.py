@@ -17,18 +17,18 @@ class TreeParameters () :
         max_actions=3,
         max_transitions=1,
         depth_bound=1, # upper bound on longest path from root, with min path=0 => depth_bound=0
-        transition_threshold=1,
+        transition_threshold=0,
         terminal_values=[-1, 1],
         row_actions_lambda=None, # these lambdas take a NodeInfo object and return the corresponding attribute of a child
         col_actions_lambda=None,
-        depth_bound_lamda=None,):
+        depth_bound_lambda=None,):
     
         if row_actions_lambda is None:
-            row_actions_lambda = lambda info : info.row_actions_lambda - 1
+            row_actions_lambda = lambda info : info.row_actions - 0
         if col_actions_lambda is None:
-            col_actions_lambda = lambda info : info.col_actions_lambda - 1
-        if depth_bound_lamda is None:
-            depth_bound_lamda = lambda info : info.depth_bound_lamda - 1
+            col_actions_lambda = lambda info : info.col_actions - 0
+        if depth_bound_lambda is None:
+            depth_bound_lambda = lambda info : info.depth_bound - 1
 
         self.device=device
         self.max_actions=max_actions
@@ -38,7 +38,7 @@ class TreeParameters () :
         self.terminal_values=terminal_values
         self.row_actions_lambda=row_actions_lambda
         self.col_actions_lambda=col_actions_lambda
-        self.depth_bound_lamda=depth_bound_lamda
+        self.depth_bound_lambda=depth_bound_lambda
 
 class Tree () :
 
@@ -77,13 +77,12 @@ class Tree () :
             return x
 
         class Info () :
-            def __init__ (self, depth=0, values=[-1, 1], row_actions=1, col_actions=1, transition_threshold=.1, solve=False) :
-                self.depth = depth
-                self.values = values
+            def __init__ (self, depth_bound=1, terminal_values=[-1, 1], row_actions=1, col_actions=1, transition_threshold=.1) :
+                self.depth_bound = depth_bound
+                self.terminal_values = terminal_values
                 self.row_actions = row_actions
                 self.col_actions = col_actions
                 self.transition_threshold = transition_threshold
-                self.solve = solve
 
         def _generate (info : Info) :
             expected_value_tensor = torch.zeros(self.legal_tensor_shape, device=self.params.device, dtype=torch.float)
@@ -92,12 +91,17 @@ class Tree () :
             legal_tensor[0, :info.row_actions, :info.col_actions, 0] = 1.
             prob_tensor = _transition_probs(self.params.max_actions, self.params.max_actions, self.params.max_transitions, info.transition_threshold)
             idx_tensor = torch.zeros(self.value_tensor_shape, device=self.params.device, dtype=torch.int32)
+            payoff_tensor = torch.zeros((1, 1), device=self.params.device, dtype=torch.float)
+
+            # need root payoffs and
 
             child_value_tensors = []
             child_legal_tensors = []
             child_prob_tensors = []
             child_idx_tensors = []
+            child_payoff_tensors = []
             child_nash_tensors = []
+            child_expected_tensors = []
 
             lengths = [] # as many entries as transitions, same as sub's
 
@@ -113,62 +117,68 @@ class Tree () :
                         if transition_prob > 0:
 
                             # Get new depth etc for child
-                            depth_ = self.params.depth_lambda(info)
+                            depth_bound_ = self.params.depth_bound_lambda(info)
                             row_actions_ = self.params.row_actions_lambda(info)
                             col_actions_ = self.params.col_actions_lambda(info)
-
-                            if depth_ > 0:
+                            if depth_bound_ > 0:
 
                                 idx_tensor[0, row, col, chance] = idx
                                 idx += 1
 
-                                info_ = Info(depth=depth_, values=info.values, row_actions=row_actions_, col_actions=col_actions_, transition_threshold=info.transition_threshold, solve=info.solve)
-                                
-                                v_, l_, p_, i_, payoff_ = _generate(info_)
+                                info_ = Info(
+                                    depth_bound=depth_bound_, 
+                                    terminal_values=info.terminal_values, 
+                                    row_actions=row_actions_, 
+                                    col_actions=col_actions_, 
+                                    transition_threshold=info.transition_threshold)
+    
+                                v_, l_, p_, i_, n_, y_, e_ = _generate(info_)
+                            
+                                payoff_ = y_[:1]
 
                                 lengths.append(v_.shape[0]-1)
 
-                                child_value_tensors.append(v_) # wont change by batchin
+                                child_value_tensors.append(v_)
                                 child_legal_tensors.append(l_)
                                 child_prob_tensors.append(p_)
-
-                                child_idx_tensors.append(i_) # will change by batching
+                                child_idx_tensors.append(i_)
+                                child_nash_tensors.append(n_)
+                                child_payoff_tensors.append(y_)
+                                child_expected_tensors.append(e_)
 
                             else:
                                 #node is terminal
                                 lengths.append(0)
-                                payoff_ = random.choice(self.params.terminal_values)
-
-                            value_tensor[0, row, col, chance] = payoff_
+                                payoff_ = torch.tensor(((random.choice(self.params.terminal_values),),)).to(self.params.device)
+                            
+                            value_tensor[0, row, col, chance] = payoff_.item()
                             
                     expected_value_tensor[0, row, col, 0] = torch.sum(value_tensor[0, row, col, :] * prob_tensor[0, row, col, :])
 
             # Get payoff of parent value tensor
-            nash_tensor = torch.zeros(self.nash_tensor_shape, device=self.params.device, dtype=torch.int)
-            payoff = 0
-            if info.solve:
-                M = expected_value_tensor[0, :, :, 0]
-                nash_tensor = self.solve(M)
-                print(nash_tensor)
-                pi = nash_tensor[0]
-                pi_1, pi_2 = pi[:info.row_actions].unsqueeze(dim=0), pi[self.params.max_actions:][:info.col_actions].unsqueeze(dim=1)
-                payoff = torch.matmul(torch.matmul(pi_1, M), pi_2).squeeze().item()
-                
+
+            M = expected_value_tensor[0, :info.row_actions, :info.col_actions, 0]
+            nash_tensor = self.solve(M, self.params.max_actions)
+            pi = nash_tensor[0]
+            pi_1, pi_2 = pi[:info.row_actions].unsqueeze(dim=0), pi[self.params.max_actions:][:info.col_actions].unsqueeze(dim=1)
+            payoff_tensor = torch.matmul(torch.matmul(pi_1, M), pi_2)
+            nash_tensor = nash_tensor[0].unsqueeze(dim=0)
+
             # Make the changes to parent index tensors
-            i = 0
-            for row in range(info.n_actions):
-                for col in range(info.n_actions):
+            _ = 0 
+            for row in range(info.row_actions):
+                for col in range(info.col_actions):
                     for chance in range(self.params.max_transitions):
                         if idx_tensor[0, row, col, chance] != 0:
-                            idx_tensor[0, row, col, chance] += sum(lengths[:i])
-                            i += 1
+                            idx_tensor[0, row, col, chance] += sum(lengths[:_])
+                            _ += 1
 
             # Make the changes to child index tensors
-            for _, t in enumerate(child_idx_tensors):
-                mask = t.clone()
+            for _, child_idx_tensor in enumerate(child_idx_tensors):
+                mask = child_idx_tensor.clone()
                 mask[mask > 0] = 1.
-                mask *= (sum(lengths[:_]) + _ + 1)
-                t += mask
+                mask *= sum(lengths[:_]) + _ + 1
+                child_idx_tensor += mask
             
             # return
 
@@ -176,22 +186,36 @@ class Tree () :
             child_legal_tensors.insert(0, legal_tensor)
             child_prob_tensors.insert(0, prob_tensor)
             child_idx_tensors.insert(0, idx_tensor)
+            child_nash_tensors.insert(0, nash_tensor)
+            child_payoff_tensors.insert(0, payoff_tensor)
+            child_expected_tensors.insert(0, expected_value_tensor)
 
             v = torch.cat(child_value_tensors, dim=0)
             l = torch.cat(child_legal_tensors, dim=0)
             p = torch.cat(child_prob_tensors, dim=0)
             i = torch.cat(child_idx_tensors, dim=0)
+            n = torch.cat(child_nash_tensors, dim=0)
+            y = torch.cat(child_payoff_tensors, dim=0)
+            e = torch.cat(child_expected_tensors, dim=0)
 
-            test_idx_tensor(i)
-
-            return v, l, p, i, payoff
+            return v, l, p, i, n, y, e
 
         # generate() body:
 
-        info = Info(self.params.depth, self.params.terminal_values, self.params.max_actions, self.params.transition_threshold, self.params.solve)
-        v, l, p, i, payoff = _generate(info)
-        self.value_tensor = torch.cat((self.value_tensor, v), dim=0)
+        root_info = Info(self.params.depth_bound, self.params.terminal_values, self.params.max_actions, self.params.max_actions, self.params.transition_threshold)
+        v, l, p, i, n, y, e = _generate(root_info)
 
+        expected_value_tensor = torch.zeros(self.legal_tensor_shape, device=self.params.device, dtype=torch.float)
+        value_tensor = torch.zeros(self.value_tensor_shape, device=self.params.device, dtype=torch.float)
+        legal_tensor = torch.zeros(self.legal_tensor_shape, device=self.params.device, dtype=torch.float)
+        legal_tensor[0, 0, 0, 0] = 1.
+        prob_tensor = torch.zeros(self.value_tensor_shape, device=self.params.device, dtype=torch.float)
+        prob_tensor[0, 0, 0, 0] = 1.
+        idx_tensor = torch.zeros(self.value_tensor_shape, device=self.params.device, dtype=torch.int32)
+
+        test_idx_tensor(i)
+
+        return v, l, p, i, n, y, e
     
 
 
@@ -236,17 +260,17 @@ class Tree () :
 
 if __name__ == '__main__' :
 
+    tree_params = TreeParameters(depth_bound=6, max_actions=2, transition_threshold=.4, max_transitions=2)
+    tree = Tree(tree_params)
 
-    tree = Tree()
+    v, l, p, i, n, y, e = tree.generate()
 
-    v, l, p, i, payoff = tree._generate(Info(depth=3, values=[-1, 1], n_actions=game_params.max_actions, transition_threshold=.3, solve=True))
 
-    i_shape = list(i.shape)
-    i_shape[0] = 1
-    i = torch.cat((torch.zeros(i_shape, device=game_params.device), i), dim=0)
-    # print(i.shape)
-    # tree.test_idx_tensor(i)
-    
-    # for __, _ in enumerate(i):
-    #     print('\n', __)
-    #     print(_)  
+    for _ in range(v.shape[0]):
+
+        print('\n', _ + 1)
+        print('expected value', e[_])
+        print('index', i[_])
+        print('payoff', y[_])
+        print('strategy', n[_])
+        break
