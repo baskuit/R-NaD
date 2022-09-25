@@ -1,3 +1,4 @@
+from typing import List
 import torch
 import pygambit
 import numpy as np
@@ -42,40 +43,30 @@ class TreeParameters () :
 
 class Tree () :
 
+
+
     def __init__ (self, params=TreeParameters()) :
 
         self.params = params
 
-        self.value_tensor = None
-        self.expected_value_tensor = None
-        self.legal_tensor = None
-        self.prob_tensor = None
-        self.idx_tensor = None
-        
-        self.value_tensor_shape = (1, self.params.max_actions, self.params.max_actions, self.params.max_transitions)
-        self.legal_tensor_shape = (1, self.params.max_actions, self.params.max_actions, 1)
-        self.nash_tensor_shape = (1, self.params.max_actions * 2)
+        self.data = None # TODO
 
     # Generates transition probabilities for each matrix
 
 
-
     def generate (self) :
 
-        # TODO test iff valid idx tensor.
         def test_idx_tensor (idx_tensor):
             l = idx_tensor[idx_tensor != 0]
             l = l.tolist()
             l.sort()
             k = list(range(2, 2 + len(l)))
             assert(l == k)
-
         def _transition_probs (rows, cols, n_trans, transition_threshold) :
             x = torch.from_numpy(np.random.dirichlet((1/n_trans,)*n_trans, (1,rows,cols))).to(self.params.device)
             x = x - torch.where(x < transition_threshold, x, 0)
             x = torch.nn.functional.normalize(x, p=1, dim=3)
             return x
-
         class Info () :
             def __init__ (self, depth_bound=1, terminal_values=[-1, 1], row_actions=1, col_actions=1, transition_threshold=.1) :
                 self.depth_bound = depth_bound
@@ -83,139 +74,112 @@ class Tree () :
                 self.row_actions = row_actions
                 self.col_actions = col_actions
                 self.transition_threshold = transition_threshold
+            def get_child (self, tree : Tree) :
+                depth_bound_ = tree.params.depth_bound_lambda(self)
+                row_actions_ = tree.params.row_actions_lambda(self)
+                col_actions_ = tree.params.col_actions_lambda(self)
+                return Info(depth_bound_, self.terminal_values, row_actions_, col_actions_, self.transition_threshold)
+        class Data:
+            def __init__ (self, value=None, expected_value=None, legal=None, chance=None, index=None, payoff=None, nash=None) :
+                self.value = value
+                self.expected_value = expected_value
+                self.legal = legal
+                self.chance = chance
+                self.index = index
+                self.payoff = payoff
+                self.nash = nash
+            def concat (self, DataList : list) :
+                DataList.insert(0, self)
+                self.value = torch.cat(tuple(data.value for data in DataList), dim=0)
+                self.expected_value = torch.cat(tuple(data.expected_value for data in DataList), dim=0)
+                self.legal = torch.cat(tuple(data.legal for data in DataList), dim=0)
+                self.chance = torch.cat(tuple(data.chance for data in DataList), dim=0)
+                self.index = torch.cat(tuple(data.index for data in DataList), dim=0)
+                self.payoff = torch.cat(tuple(data.payoff for data in DataList), dim=0)
+                self.nash = torch.cat(tuple(data.nash for data in DataList), dim=0)
+            def from_info (self, tree : Tree, info : Info) :
+                self.value_shape = (1, tree.params.max_actions, tree.params.max_actions, tree.params.max_transitions)
+                self.legal_shape = (1, tree.params.max_actions, tree.params.max_actions, 1)
+                self.nash_shape = (1, tree.params.max_actions * 2)
+                self.value = torch.zeros(self.value_shape, device=tree.params.device, dtype=torch.float)
+                self.expected_value = torch.zeros(self.legal_shape, device=tree.params.device, dtype=torch.float)
+                self.legal = torch.zeros(self.legal_shape, device=tree.params.device, dtype=torch.float)
+                self.legal[0, :info.row_actions, :info.col_actions, 0] = 1.
+                self.chance = _transition_probs(tree.params.max_actions, tree.params.max_actions, tree.params.max_transitions, info.transition_threshold)
+                self.index = torch.zeros(self.value_shape, device=tree.params.device, dtype=torch.float)
+                self.payoff = torch.zeros((1, 1), device=tree.params.device, dtype=torch.float)
 
-        def _generate (info : Info) :
-            expected_value_tensor = torch.zeros(self.legal_tensor_shape, device=self.params.device, dtype=torch.float)
-            value_tensor = torch.zeros(self.value_tensor_shape, device=self.params.device, dtype=torch.float)
-            legal_tensor = torch.zeros(self.legal_tensor_shape, device=self.params.device, dtype=torch.float)
-            legal_tensor[0, :info.row_actions, :info.col_actions, 0] = 1.
-            prob_tensor = _transition_probs(self.params.max_actions, self.params.max_actions, self.params.max_transitions, info.transition_threshold)
-            idx_tensor = torch.zeros(self.value_tensor_shape, device=self.params.device, dtype=torch.int32)
-            payoff_tensor = torch.zeros((1, 1), device=self.params.device, dtype=torch.float)
+        def _generate (info : Info) -> Data:
 
-            # need root payoffs and
+            data = Data()
+            data.from_info(self, info)
+            child_data_list = []
+            lengths = [] # can use comprehension on child_data_list since that doesn't include the required 0 entries for terminal states
 
-            child_value_tensors = []
-            child_legal_tensors = []
-            child_prob_tensors = []
-            child_idx_tensors = []
-            child_payoff_tensors = []
-            child_nash_tensors = []
-            child_expected_tensors = []
-
-            lengths = [] # as many entries as transitions, same as sub's
-
-            idx = 2 # incremented herein
-
+            idx = 2
             for row in range(info.row_actions):
                 for col in range(info.col_actions):
 
                     for chance in range(self.params.max_transitions):
 
-                        transition_prob = prob_tensor[0, row, col, chance]
+                        transition_prob = data.chance[0, row, col, chance]
 
                         if transition_prob > 0:
+                            child_info = info.get_child(self)
 
-                            # Get new depth etc for child
-                            depth_bound_ = self.params.depth_bound_lambda(info)
-                            row_actions_ = self.params.row_actions_lambda(info)
-                            col_actions_ = self.params.col_actions_lambda(info)
-                            if depth_bound_ > 0:
-
-                                idx_tensor[0, row, col, chance] = idx
+                            if child_info.depth_bound > 0:
+                                child_data = _generate(child_info)
+                                child_data_list.append(child_data)
+                                lengths.append(child_data.value.shape[0]-1)
+                                data.index[0, row, col, chance] = idx
                                 idx += 1
-
-                                info_ = Info(
-                                    depth_bound=depth_bound_, 
-                                    terminal_values=info.terminal_values, 
-                                    row_actions=row_actions_, 
-                                    col_actions=col_actions_, 
-                                    transition_threshold=info.transition_threshold)
-    
-                                v_, l_, p_, i_, n_, y_, e_ = _generate(info_)
-                            
-                                payoff_ = y_[:1]
-
-                                lengths.append(v_.shape[0]-1)
-
-                                child_value_tensors.append(v_)
-                                child_legal_tensors.append(l_)
-                                child_prob_tensors.append(p_)
-                                child_idx_tensors.append(i_)
-                                child_nash_tensors.append(n_)
-                                child_payoff_tensors.append(y_)
-                                child_expected_tensors.append(e_)
+                                child_payoff = child_data.payoff[:1]
 
                             else:
                                 #node is terminal
                                 lengths.append(0)
-                                payoff_ = torch.tensor(((random.choice(self.params.terminal_values),),)).to(self.params.device)
+                                child_payoff = torch.tensor(((random.choice(self.params.terminal_values),),)).to(self.params.device)
                             
-                            value_tensor[0, row, col, chance] = payoff_.item()
-                            
-                    expected_value_tensor[0, row, col, 0] = torch.sum(value_tensor[0, row, col, :] * prob_tensor[0, row, col, :])
+                            data.value[0, row, col, chance] = child_payoff.item()
+                    data.expected_value[0, row, col, 0] = torch.sum(data.value[0, row, col, :] * data.chance[0, row, col, :])
 
             # Get payoff of parent value tensor
 
-            M = expected_value_tensor[0, :info.row_actions, :info.col_actions, 0]
-            nash_tensor = self.solve(M, self.params.max_actions)
-            pi = nash_tensor[0]
+            M = data.expected_value[0, :info.row_actions, :info.col_actions, 0]
+            data.nash = self.solve(M, self.params.max_actions)
+            pi = data.nash[0]
             pi_1, pi_2 = pi[:info.row_actions].unsqueeze(dim=0), pi[self.params.max_actions:][:info.col_actions].unsqueeze(dim=1)
-            payoff_tensor = torch.matmul(torch.matmul(pi_1, M), pi_2)
-            nash_tensor = nash_tensor[0].unsqueeze(dim=0)
+            data.payoff = torch.matmul(torch.matmul(pi_1, M), pi_2)
+            data.nash = data.nash[0].unsqueeze(dim=0) #pick a strat modify shape for Data concat operation
 
             # Make the changes to parent index tensors
             _ = 0 
             for row in range(info.row_actions):
                 for col in range(info.col_actions):
                     for chance in range(self.params.max_transitions):
-                        if idx_tensor[0, row, col, chance] != 0:
-                            idx_tensor[0, row, col, chance] += sum(lengths[:_])
+                        if data.index[0, row, col, chance] != 0:
+                            data.index[0, row, col, chance] += sum(lengths[:_])
                             _ += 1
 
             # Make the changes to child index tensors
-            for _, child_idx_tensor in enumerate(child_idx_tensors):
-                mask = child_idx_tensor.clone()
+            for _, child_data in enumerate(child_data_list):
+                mask = child_data.index.clone()
                 mask[mask > 0] = 1.
                 mask *= sum(lengths[:_]) + _ + 1
-                child_idx_tensor += mask
+                child_data.index += mask
             
-            # return
 
-            child_value_tensors.insert(0, value_tensor)
-            child_legal_tensors.insert(0, legal_tensor)
-            child_prob_tensors.insert(0, prob_tensor)
-            child_idx_tensors.insert(0, idx_tensor)
-            child_nash_tensors.insert(0, nash_tensor)
-            child_payoff_tensors.insert(0, payoff_tensor)
-            child_expected_tensors.insert(0, expected_value_tensor)
+            child_data_list.insert(0, data)
+            data.concat(child_data_list)
 
-            v = torch.cat(child_value_tensors, dim=0)
-            l = torch.cat(child_legal_tensors, dim=0)
-            p = torch.cat(child_prob_tensors, dim=0)
-            i = torch.cat(child_idx_tensors, dim=0)
-            n = torch.cat(child_nash_tensors, dim=0)
-            y = torch.cat(child_payoff_tensors, dim=0)
-            e = torch.cat(child_expected_tensors, dim=0)
+            return data
 
-            return v, l, p, i, n, y, e
-
-        # generate() body:
+        ### ### ###
 
         root_info = Info(self.params.depth_bound, self.params.terminal_values, self.params.max_actions, self.params.max_actions, self.params.transition_threshold)
-        v, l, p, i, n, y, e = _generate(root_info)
+        root_data = _generate(root_info)
 
-        expected_value_tensor = torch.zeros(self.legal_tensor_shape, device=self.params.device, dtype=torch.float)
-        value_tensor = torch.zeros(self.value_tensor_shape, device=self.params.device, dtype=torch.float)
-        legal_tensor = torch.zeros(self.legal_tensor_shape, device=self.params.device, dtype=torch.float)
-        legal_tensor[0, 0, 0, 0] = 1.
-        prob_tensor = torch.zeros(self.value_tensor_shape, device=self.params.device, dtype=torch.float)
-        prob_tensor[0, 0, 0, 0] = 1.
-        idx_tensor = torch.zeros(self.value_tensor_shape, device=self.params.device, dtype=torch.int32)
-
-        test_idx_tensor(i)
-
-        return v, l, p, i, n, y, e
+        return root_data
     
 
 
@@ -244,7 +208,7 @@ class Tree () :
     def step () :
         pass
 
-
+        # TODO Sort strats to prefer pure
     def solve (self, M, max_actions=2) :
 
         rows, cols = M.shape[:2]
@@ -255,6 +219,8 @@ class Tree () :
 
         g = pygambit.Game.from_arrays(N, -N)
         solutions = [[S[_] if _ < rows else 0 for _ in range(max_actions)] + [S[rows+_] if _ < cols else 0 for _ in range(max_actions)] for S in pygambit.nash.enummixed_solve(g, rational=False)]
+        purity = lambda solution : -int(1 in solution[:max_actions])  -int(1 in solution[max_actions:])
+        solutions.sort(key=purity)
         return torch.tensor(solutions, dtype=torch.float)
 
 
@@ -263,14 +229,14 @@ if __name__ == '__main__' :
     tree_params = TreeParameters(depth_bound=6, max_actions=2, transition_threshold=.4, max_transitions=2)
     tree = Tree(tree_params)
 
-    v, l, p, i, n, y, e = tree.generate()
+    data = tree.generate()
 
 
-    for _ in range(v.shape[0]):
+    for _ in range(data.value.shape[0]):
 
         print('\n', _ + 1)
-        print('expected value', e[_])
-        print('index', i[_])
-        print('payoff', y[_])
-        print('strategy', n[_])
+        print('expected value', data.expected_value[_])
+        print('index', data.index[_])
+        print('payoff', data.payoff[_])
+        print('strategy', data.nash[_])
         break
