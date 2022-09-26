@@ -1,4 +1,3 @@
-from typing import List
 import torch
 import pygambit
 import numpy as np
