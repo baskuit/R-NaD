@@ -43,30 +43,27 @@ class TreeParameters () :
 
 class Tree () :
 
-
-
     def __init__ (self, params=TreeParameters()) :
-
         self.params = params
-
         self.data = None # TODO
-
-    # Generates transition probabilities for each matrix
-
 
     def generate (self) :
 
-        def test_idx_tensor (idx_tensor):
-            l = idx_tensor[idx_tensor != 0]
-            l = l.tolist()
-            l.sort()
-            k = list(range(2, 2 + len(l)))
-            assert(l == k)
+        def assert_index_is_tree (data):
+            indices = data.index[data.index != 0]
+            indices = indices.tolist()
+            indices.sort()
+            non_root_indices = list(range(2, 2 + len(indices)))
+            assert(indices == non_root_indices)
+            for _, index_slice in enumerate(data.index[1:]):
+                assert(~(0 < index_slice <= _+1 ))
+                # index tensor always points to higher indices
+            # This guarantees tree structure
         def _transition_probs (rows, cols, n_trans, transition_threshold) :
-            x = torch.from_numpy(np.random.dirichlet((1/n_trans,)*n_trans, (1,rows,cols))).to(self.params.device)
-            x = x - torch.where(x < transition_threshold, x, 0)
-            x = torch.nn.functional.normalize(x, p=1, dim=3)
-            return x
+            probs = torch.from_numpy(np.random.dirichlet((1/n_trans,)*n_trans, (1,rows,cols))).to(self.params.device)
+            probs = probs - torch.where(probs < transition_threshold, probs, 0)
+            probs = torch.nn.functional.normalize(probs, p=1, dim=3)
+            return probs
         class Info () :
             def __init__ (self, depth_bound=1, terminal_values=[-1, 1], row_actions=1, col_actions=1, transition_threshold=.1) :
                 self.depth_bound = depth_bound
@@ -106,8 +103,9 @@ class Tree () :
                 self.legal = torch.zeros(self.legal_shape, device=tree.params.device, dtype=torch.float)
                 self.legal[0, :info.row_actions, :info.col_actions, 0] = 1.
                 self.chance = _transition_probs(tree.params.max_actions, tree.params.max_actions, tree.params.max_transitions, info.transition_threshold)
-                self.index = torch.zeros(self.value_shape, device=tree.params.device, dtype=torch.float)
+                self.index = torch.zeros(self.value_shape, device=tree.params.device, dtype=torch.int32)
                 self.payoff = torch.zeros((1, 1), device=tree.params.device, dtype=torch.float)
+                self.nash = torch.zeros(self.nash_shape, device=tree.params.device, dtype=torch.float)
 
         def _generate (info : Info) -> Data:
 
@@ -143,16 +141,15 @@ class Tree () :
                             data.value[0, row, col, chance] = child_payoff.item()
                     data.expected_value[0, row, col, 0] = torch.sum(data.value[0, row, col, :] * data.chance[0, row, col, :])
 
-            # Get payoff of parent value tensor
-
+            # Get NE payoff and strategies of parent expected value matrix
             M = data.expected_value[0, :info.row_actions, :info.col_actions, 0]
-            data.nash = self.solve(M, self.params.max_actions)
-            pi = data.nash[0]
+            solutions = self.solve(M, self.params.max_actions)
+            pi = solutions[0]
             pi_1, pi_2 = pi[:info.row_actions].unsqueeze(dim=0), pi[self.params.max_actions:][:info.col_actions].unsqueeze(dim=1)
             data.payoff = torch.matmul(torch.matmul(pi_1, M), pi_2)
-            data.nash = data.nash[0].unsqueeze(dim=0) #pick a strat modify shape for Data concat operation
+            data.nash = pi.unsqueeze(dim=0)
 
-            # Make the changes to parent index tensors
+            # Update parent index tensor
             _ = 0 
             for row in range(info.row_actions):
                 for col in range(info.col_actions):
@@ -161,7 +158,7 @@ class Tree () :
                             data.index[0, row, col, chance] += sum(lengths[:_])
                             _ += 1
 
-            # Make the changes to child index tensors
+            # Update child index tensors
             for _, child_data in enumerate(child_data_list):
                 mask = child_data.index.clone()
                 mask[mask > 0] = 1.
@@ -169,27 +166,39 @@ class Tree () :
                 child_data.index += mask
             
 
-            child_data_list.insert(0, data)
             data.concat(child_data_list)
 
             return data
 
-        ### ### ###
-
         root_info = Info(self.params.depth_bound, self.params.terminal_values, self.params.max_actions, self.params.max_actions, self.params.transition_threshold)
         root_data = _generate(root_info)
 
-        return root_data
+        # Add terminal/absorbing state at index=0
+        terminal_info = Info(0, [0], 1, 1, 0)
+        game_data = Data()
+        game_data.from_info(self, terminal_info)
+        game_data.concat([root_data])
+
+        return game_data
+
+    # TODO Sort strats to prefer pure
+    def solve (self, M, max_actions=2) :
+        rows, cols = M.shape[:2]
+        N = np.zeros((rows, cols), dtype=pygambit.Decimal)
+        for _ in range(rows) :
+            for __ in range(cols) :
+                N[_][__] = pygambit.Decimal(M[_][__].item())
+
+        g = pygambit.Game.from_arrays(N, -N)
+        solutions = [[S[_] if _ < rows else 0 for _ in range(max_actions)] + [S[rows+_] if _ < cols else 0 for _ in range(max_actions)] for S in pygambit.nash.enummixed_solve(g, rational=False)]
+        purity = lambda solution : -int(1 in solution[:max_actions])  -int(1 in solution[max_actions:])
+        solutions.sort(key=purity)
+        return torch.tensor(solutions, dtype=torch.float)
     
-
-
-
     def save (self) :
-
         pass
 
     def load (self) :
-        self.generated = True
         pass
 
     # The following functions must be implemented for all compatible two-player IIG's
@@ -208,35 +217,23 @@ class Tree () :
     def step () :
         pass
 
-        # TODO Sort strats to prefer pure
-    def solve (self, M, max_actions=2) :
-
-        rows, cols = M.shape[:2]
-        N = np.zeros((rows, cols), dtype=pygambit.Decimal)
-        for _ in range(rows) :
-            for __ in range(cols) :
-                N[_][__] = pygambit.Decimal(M[_][__].item())
-
-        g = pygambit.Game.from_arrays(N, -N)
-        solutions = [[S[_] if _ < rows else 0 for _ in range(max_actions)] + [S[rows+_] if _ < cols else 0 for _ in range(max_actions)] for S in pygambit.nash.enummixed_solve(g, rational=False)]
-        purity = lambda solution : -int(1 in solution[:max_actions])  -int(1 in solution[max_actions:])
-        solutions.sort(key=purity)
-        return torch.tensor(solutions, dtype=torch.float)
-
 
 if __name__ == '__main__' :
 
-    tree_params = TreeParameters(depth_bound=6, max_actions=2, transition_threshold=.4, max_transitions=2)
+    tree_params = TreeParameters(depth_bound=3, max_actions=2, transition_threshold=.4, max_transitions=1)
     tree = Tree(tree_params)
 
     data = tree.generate()
 
 
+    print('Printing game tree data')
+    print('Note: Index=0 is the terminal state and Index=1 is the initial state')
+
     for _ in range(data.value.shape[0]):
 
-        print('\n', _ + 1)
+        print('\nIndex: ', _)
         print('expected value', data.expected_value[_])
         print('index', data.index[_])
+        print('chance', data.chance[_])
         print('payoff', data.payoff[_])
         print('strategy', data.nash[_])
-        break
