@@ -49,28 +49,37 @@ class ConvNet (nn.Module):
         self.value =  nn.Linear(channels * (size**2), 1)
 
     def forward (self, input_batch) :
+        filter_row = input_batch[:, 1, :, 0]
         x = input_batch
         x = self.pre(x)
         for block in self.tower:
             x = block(x)
 
         x = x.contiguous().view(-1, self.channels*(self.size**2))
-        logits_batch = self.policy(x)
-        policy_batch = F.softmax(logits_batch, dim=1)
-        value_batch = self.value(x)
-        return logits_batch, policy_batch, value_batch
+        logits = self.policy(x)
+        policy = F.softmax(logits, dim=1)
+        policy *= filter_row
+        F.normalize(policy, dim=1)
+        value = self.value(x)
+        actions = torch.squeeze(torch.multinomial(policy, num_samples=1))
+        return logits, policy, value, actions
 
 
 if __name__ == '__main__' :
 
-    tree_params = game.TreeParameters(depth_bound=4)
+    tree_params = game.TreeParameters(depth_bound=6, max_transitions=2, transition_threshold=.0)
     tree = game.Tree(tree_params)
     tree.generate()
 
+
     net = ConvNet(size=tree_params.max_actions, channels=6, depth=3)
 
-    states = tree.initial(11)
-    observation = states.observation()
-    # print(observation.shape)
-    logits, policy, value = net.forward(observation)
-    print(policy)
+    for _ in range(100):
+        states = tree.initial(2**16)
+
+        while not states.terminal:
+
+            observation = states.observation()
+            logits, policy, value, actions = net.forward(observation)
+            states.step(actions)
+
