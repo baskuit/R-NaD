@@ -1,3 +1,4 @@
+from typing_extensions import Self
 import torch
 import pygambit
 import numpy as np
@@ -86,25 +87,25 @@ class Tree () :
                 self.nash = nash
             def concat (self, DataList : list) :
                 DataList.insert(0, self)
-                self.value = torch.cat(tuple(data.value for data in DataList), dim=0)
-                self.expected_value = torch.cat(tuple(data.expected_value for data in DataList), dim=0)
-                self.legal = torch.cat(tuple(data.legal for data in DataList), dim=0)
-                self.chance = torch.cat(tuple(data.chance for data in DataList), dim=0)
-                self.index = torch.cat(tuple(data.index for data in DataList), dim=0)
-                self.payoff = torch.cat(tuple(data.payoff for data in DataList), dim=0)
-                self.nash = torch.cat(tuple(data.nash for data in DataList), dim=0)
+                self.value = torch.cat(tuple(data.value for data in DataList), dim=0).contiguous()
+                self.expected_value = torch.cat(tuple(data.expected_value for data in DataList), dim=0).contiguous()
+                self.legal = torch.cat(tuple(data.legal for data in DataList), dim=0).contiguous()
+                self.chance = torch.cat(tuple(data.chance for data in DataList), dim=0).contiguous()
+                self.index = torch.cat(tuple(data.index for data in DataList), dim=0).contiguous()
+                self.payoff = torch.cat(tuple(data.payoff for data in DataList), dim=0).contiguous()
+                self.nash = torch.cat(tuple(data.nash for data in DataList), dim=0).contiguous()
             def from_info (self, tree : Tree, info : Info) :
-                self.value_shape = (1, tree.params.max_actions, tree.params.max_actions, tree.params.max_transitions)
-                self.legal_shape = (1, tree.params.max_actions, tree.params.max_actions, 1)
-                self.nash_shape = (1, tree.params.max_actions * 2)
-                self.value = torch.zeros(self.value_shape, device=tree.params.device, dtype=torch.float)
-                self.expected_value = torch.zeros(self.legal_shape, device=tree.params.device, dtype=torch.float)
-                self.legal = torch.zeros(self.legal_shape, device=tree.params.device, dtype=torch.float)
+                value_shape = (1, tree.params.max_actions, tree.params.max_actions, tree.params.max_transitions)
+                legal_shape = (1, tree.params.max_actions, tree.params.max_actions, 1)
+                nash_shape = (1, tree.params.max_actions * 2)
+                self.value = torch.zeros(value_shape, device=tree.params.device, dtype=torch.float)
+                self.expected_value = torch.zeros(legal_shape, device=tree.params.device, dtype=torch.float)
+                self.legal = torch.zeros(legal_shape, device=tree.params.device, dtype=torch.float)
                 self.legal[0, :info.row_actions, :info.col_actions, 0] = 1.
                 self.chance = _transition_probs(tree.params.max_actions, tree.params.max_actions, tree.params.max_transitions, info.transition_threshold)
-                self.index = torch.zeros(self.value_shape, device=tree.params.device, dtype=torch.int32)
+                self.index = torch.zeros(value_shape, device=tree.params.device, dtype=torch.int32)
                 self.payoff = torch.zeros((1, 1), device=tree.params.device, dtype=torch.float)
-                self.nash = torch.zeros(self.nash_shape, device=tree.params.device, dtype=torch.float)
+                self.nash = torch.zeros(nash_shape, device=tree.params.device, dtype=torch.float)
 
         def _generate (info : Info) -> Data:
 
@@ -143,6 +144,7 @@ class Tree () :
             # Get NE payoff and strategies of parent expected value matrix
             M = data.expected_value[0, :info.row_actions, :info.col_actions, 0]
             solutions = self.solve(M, self.params.max_actions)
+            if len(solutions) == 0: print(M)
             pi = solutions[0]
             pi_1, pi_2 = pi[:info.row_actions].unsqueeze(dim=0), pi[self.params.max_actions:][:info.col_actions].unsqueeze(dim=1)
             data.payoff = torch.matmul(torch.matmul(pi_1, M), pi_2)
@@ -177,8 +179,7 @@ class Tree () :
         game_data = Data()
         game_data.from_info(self, terminal_info)
         game_data.concat([root_data])
-
-        return game_data
+        self.data = game_data
 
     # TODO Sort strats to prefer pure
     def solve (self, M, max_actions=2) :
@@ -190,49 +191,58 @@ class Tree () :
 
         g = pygambit.Game.from_arrays(N, -N)
         solutions = [[S[_] if _ < rows else 0 for _ in range(max_actions)] + [S[rows+_] if _ < cols else 0 for _ in range(max_actions)] for S in pygambit.nash.enummixed_solve(g, rational=False)]
-        purity = lambda solution : -int(1 in solution[:max_actions])  -int(1 in solution[max_actions:])
-        solutions.sort(key=purity)
+        # purity = lambda solution : -int(1 in solution[:max_actions])  -int(1 in solution[max_actions:])
+        # solutions.sort(key=purity)
         return torch.tensor(solutions, dtype=torch.float)
     
     def save (self) :
-        pass
+        if self.data is None:
+            return
+        # torch.save()
 
     def load (self) :
         pass
 
-    # The following functions must be implemented for all compatible two-player IIG's
+    def initial (self, batch_size) :
+        return States(self, batch_size)
 
+class States () :
+    def __init__ (self, tree : Tree, batch_size) :
+        self.tree = tree
+        self.batch_size = batch_size
+        self.indices = torch.ones((batch_size,), dtype=torch.int32, device=tree.params.device)
+        self.turn = torch.zeros((batch_size,), dtype=torch.long, device=tree.params.device) #indices along player dim
+        self.actions_1 = None
+        self.actions_2 = None
 
-    def observations (self) :
+    def observation (self) :
+        expected_value = torch.index_select(self.tree.data.expected_value, 0, self.indices)
+        legal = torch.index_select(self.tree.data.legal, 0, self.indices)
+        observation_1 = torch.cat([expected_value, legal], dim=3)
+        observation_2 = torch.cat([-expected_value, legal], dim=3).swapaxes(1, 2)
+        observations = torch.stack([observation_1, observation_2], dim=1)
+        observation = observations[torch.arange(self.batch_size), self.turn]
+        observation = torch.movedim(observation, 3, 1)
+        return observation
+
+    def step(actions):
         pass
-
-    def initial (batch_size) :
-        pass
-
-    # Phi from DeepNash paper
-    def turn (states) :
-        pass
-
-    def step () :
-        pass
-
 
 if __name__ == '__main__' :
 
-    tree_params = TreeParameters(depth_bound=3, max_actions=2, transition_threshold=.4, max_transitions=1)
+    tree_params = TreeParameters(depth_bound=5, max_actions=3, transition_threshold=.2, max_transitions=2)
     tree = Tree(tree_params)
 
-    data = tree.generate()
+    tree.generate()
+    exit()
+    # print('Printing game tree data')
+    # print('Note: Index=0 is the terminal state and Index=1 is the initial state')
 
+    # for _ in range(data.value.shape[0]):
 
-    print('Printing game tree data')
-    print('Note: Index=0 is the terminal state and Index=1 is the initial state')
-
-    for _ in range(data.value.shape[0]):
-
-        print('\nIndex: ', _)
-        print('expected value', data.expected_value[_])
-        print('index', data.index[_])
-        print('chance', data.chance[_])
-        print('payoff', data.payoff[_])
-        print('strategy', data.nash[_])
+    #     print('\nIndex: ', _)
+    #     print('expected value', data.expected_value[_])
+    #     print('index', data.index[_])
+    #     print('chance', data.chance[_])
+    #     print('payoff', data.payoff[_])
+    #     print('strategy', data.nash[_])
