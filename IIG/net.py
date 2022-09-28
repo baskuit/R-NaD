@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import copy
+import time
 
 import game
+import vtrace
 
 class CrossConv (nn.Module) :
  
@@ -67,19 +68,22 @@ class ConvNet (nn.Module):
 
 if __name__ == '__main__' :
 
-    tree_params = game.TreeParameters(depth_bound=6, max_transitions=2, transition_threshold=.0)
+    start = time.time()
+
+    tree_params = game.TreeParameters(depth_bound=3, max_transitions=2, transition_threshold=.0)
     tree = game.Tree(tree_params)
     tree.generate()
+    tree.to(torch.device('cuda:0'))
 
+    done_generating = time.time()
+    print('game generation time',(done_generating - start)/1)
 
-    net = ConvNet(size=tree_params.max_actions, channels=6, depth=3)
+    net = ConvNet(size=tree_params.max_actions, channels=6, depth=3).to(device=tree.params.device)
+    episodes = game.Episodes(tree, 3)
+    episodes.generate(net)
 
-    for _ in range(100):
-        states = tree.initial(2**16)
+    vtrace.estimate(episodes)
 
-        while not states.terminal:
-
-            observation = states.observation()
-            logits, policy, value, actions = net.forward(observation)
-            states.step(actions)
+    done_stepping = time.time()
+    print('episonde generation time', (done_stepping - done_generating)/1)
 
