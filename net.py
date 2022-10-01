@@ -65,6 +65,21 @@ class ConvNet (nn.Module):
         actions = torch.squeeze(torch.multinomial(policy, num_samples=1))
         return logits, policy, value, actions
 
+    def forward_policy (self, input_batch) :
+        filter_row = input_batch[:, 1, :, 0]
+        x = input_batch
+        x = self.pre(x)
+        for block in self.tower:
+            x = block(x)
+
+        x = x.contiguous().view(-1, self.channels*(self.size**2))
+        logits = self.policy(x)
+        policy = F.softmax(logits, dim=1)
+        policy *= filter_row #multiply policy by actions mask
+        F.normalize(policy, dim=1)
+        return policy
+
+
 
 if __name__ == '__main__' :
 
@@ -74,16 +89,23 @@ if __name__ == '__main__' :
     tree = game.Tree(tree_params)
     tree.generate()
     tree.to(torch.device('cuda:0'))
+    print('tree chance shape', tree.data.chance.shape)
 
     done_generating = time.time()
     print('game generation time',(done_generating - start)/1)
 
     net = ConvNet(size=tree_params.max_actions, channels=6, depth=3).to(device=tree.params.device)
-    episodes = game.Episodes(tree, 3)
+    net_ = ConvNet(size=tree_params.max_actions, channels=6, depth=3).to(device=tree.params.device)
+    
+    batch_size = 2**1
+    episodes = game.Episodes(tree, batch_size)
     episodes.generate(net)
 
-    vtrace.estimate(episodes)
+    vtrace.transform_rewards(episodes, net, net_, net_, .2)
+
+
+    vtrace.estimate(episodes,reward_transform=None)
 
     done_stepping = time.time()
-    print('episonde generation time', (done_stepping - done_generating)/1)
+    print('episode generation time', (done_stepping - done_generating)/1)
 
