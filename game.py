@@ -1,11 +1,9 @@
-from re import T
 import torch
 import pygambit
 import numpy as np
 import random
 import os
 import time
-import copy
 import logging
 
 class Tree () :
@@ -54,15 +52,7 @@ class Tree () :
         self.index = torch.zeros(value_shape, device=device, dtype=torch.long)
         self.payoff = torch.zeros((1, 1), device=device, dtype=torch.float)
         self.nash = torch.zeros(nash_shape, device=device, dtype=torch.float)
-        self.dict = {
-            'value':self.value,
-            'expected_value':self.expected_value,
-            'legal':self.legal,
-            'chance':self.chance,
-            'index':self.index,
-            'payoff':self.payoff,
-            'nash':self.nash,
-        }
+        self.saved_keys = ['value', 'expected_value', 'legal', 'chance', 'index', 'payoff', 'nash']
 
     def child (self):
         child = Tree(
@@ -82,6 +72,9 @@ class Tree () :
         return child
 
     def _transition_probs (self, rows, cols, n_trans, transition_threshold) :
+        """
+        Generates a random
+        """
         probs = torch.from_numpy(np.random.dirichlet((1/n_trans,)*n_trans, (1,rows,cols))).to(self.device)
         probs = probs - torch.where(probs < transition_threshold, probs, 0)
         probs = torch.nn.functional.normalize(probs, p=1, dim=3)
@@ -91,24 +84,19 @@ class Tree () :
     def _assert_index_is_tree (self):
         """
         The index tensor describes a tree if and only if it is increasing
-        (The values in the index[idx] are all > idx)
-        and the non-zero values in index are one-to-one some interval [1 + is_root, x]
+        (The non-zero values in the index[idx] are all > idx)
+        and the non-zero values in index are one-to-one with some interval [1 + is_root, x]
         """
         indices = self.index[self.index != 0]
         indices = indices.tolist()
         indices.sort()
         all_possible_indices = list(range(1 + self.is_root, 2 + len(indices))) #
-        logging.debug('assert_index_is_tree indices: ')
-        logging.debug(indices)
-        logging.debug(all_possible_indices)
         assert(indices == all_possible_indices)
-        # for idx, index_slice in enumerate(self.index[1:]):
-
-        #     print('index increasing bool tensor')
-        #     print(idx)
-        #     print(index_slice)
-        #     print((index_slice > idx))
-        #     assert(~torch.any(index_slice > idx))
+        for idx, index_slice in enumerate(self.index[1:]):
+            greater_than_idx = index_slice > idx
+            is_zero = index_slice == 0
+            is_valid = torch.logical_or(greater_than_idx, is_zero)
+            assert(torch.all(is_valid))
 
 
     def _solve (self, M : torch.Tensor, max_actions=2) :
@@ -221,27 +209,23 @@ class Tree () :
         self.payoff = torch.cat(tuple(child.payoff for child in child_list), dim=0)
         self.nash = torch.cat(tuple(child.nash for child in child_list), dim=0)
 
-    def save(self):
+    def save (self):
         recent_dir = os.path.join(self.directory, 'recent')
         if not os.path.exists(recent_dir):
             os.mkdir(recent_dir)
         time_dir = os.path.join(self.directory, str(int(time.time())))
         if not os.path.exists(time_dir):
             os.mkdir(time_dir)
-        torch.save(self.dict, os.path.join(recent_dir, 'tree.tar'))
-        torch.save(self.dict, os.path.join(time_dir, 'tree.tar'))
+        dict = {key:self.__dict__[key] for key in self.saved_keys}
+        torch.save(dict, os.path.join(recent_dir, 'tree.tar'))
+        torch.save(dict, os.path.join(time_dir, 'tree.tar'))
 
-    def load (self, dir=None) :
-        if dir is None:
-            dir = os.path.join(self.directory, 'recent')
-        self.dict = torch.load(dir)
-        self.value = self.dict['value']
-        self.expected_value = self.dict['expected_value']
-        self.legal = self.dict['legal']
-        self.chance = self.dict['chance']
-        self.index = self.dict['index']
-        self.payoff = self.dict['payoff']
-        self.nash = self.dict['nash']
+    def load (self, path=None) :
+        if path is None:
+            path = os.path.join(self.directory, 'recent', 'tree.tar')
+        dict = torch.load(path)
+        for key, value in dict.items():
+            self.__dict__[key] = value
 
     def to (self, device):
         self.device = device
@@ -368,24 +352,12 @@ if __name__ == '__main__' :
 
     tree = Tree(
         max_actions=2,
-        depth_bound=3,
-        max_transitions=3,
-        # depth_bound_lambda=depth_bound_lambda
+        depth_bound=9,
+        max_transitions=2,
+        depth_bound_lambda=depth_bound_lambda
         )
-
-    tree._generate()
+    # tree._generate()
+    tree.load()
     # tree.save()
-    # torch.save(self.chance, './saved/data')
-    # self.save()
-    # print('Printing game tree data')
-    # print('Note: Index=0 is the terminal state and Index=1 is the initial state')
-
-    for _ in range(tree.value.shape[0]):
-
-        print('\nIndex: ', _)
-        # print('expected value', tree.expected_value[_])
-        print('index', tree.index[_])
-        # print('chance', tree.chance[_])
-        # print('payoff', tree.payoff[_])
-        # print('strategy', tree.nash[_])
-    tree._assert_index_is_tree()
+    print(tree.value.shape)
+    # tree._assert_index_is_tree()
