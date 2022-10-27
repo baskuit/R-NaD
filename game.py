@@ -6,6 +6,20 @@ import os
 import time
 import logging
 
+"""
+This file contains:
+
+    Tree
+    The logic for building, solving, saving, and loading large stochastic matrix games
+
+    States
+    Represents a batch of states and observations of a tree game
+
+    Episodes
+    Saves the episode data for a batch of states played to completion
+
+"""
+
 class Tree () :
 
     def __init__ (self,
@@ -52,9 +66,9 @@ class Tree () :
         self.index = torch.zeros(value_shape, device=device, dtype=torch.long)
         self.payoff = torch.zeros((1, 1), device=device, dtype=torch.float)
         self.nash = torch.zeros(nash_shape, device=device, dtype=torch.float)
-        self.saved_keys = ['value', 'expected_value', 'legal', 'chance', 'index', 'payoff', 'nash']
+        self.saved_keys = ['max_actions','max_transitions','depth_bound','value','expected_value','legal','chance','index','payoff','nash']
 
-    def child (self):
+    def _child (self):
         child = Tree(
             is_root=False,
             device=self.device,
@@ -73,7 +87,7 @@ class Tree () :
 
     def _transition_probs (self, rows, cols, n_trans, transition_threshold) :
         """
-        Generates a random
+        Generates a random transition probabilty tensor. (It does not respect legality of moves, it is masked later)
         """
         probs = torch.from_numpy(np.random.dirichlet((1/n_trans,)*n_trans, (1,rows,cols))).to(self.device)
         probs = probs - torch.where(probs < transition_threshold, probs, 0)
@@ -112,6 +126,7 @@ class Tree () :
                 N[_][__] = pygambit.Decimal(M[_][__].item())
 
         g = pygambit.Game.from_arrays(N, -N)
+        # TODO fix names here
         solutions = [[S[_] if _ < rows else 0 for _ in range(max_actions)] + [S[rows+_] if _ < cols else 0 for _ in range(max_actions)] for S in pygambit.nash.enummixed_solve(g, rational=False)]
         if not solutions:
             solutions = [[S[_] if _ < rows else 0 for _ in range(max_actions)] + [S[rows+_] if _ < cols else 0 for _ in range(max_actions)] for S in pygambit.nash.lcp_solve(g, rational=False)]
@@ -136,7 +151,7 @@ class Tree () :
 
                         #create new tree
                         # TODO index messed up, maybe because copy?
-                        child = self.child()
+                        child = self._child()
 
                         if child.depth_bound > 0:
                             child._generate()
@@ -220,9 +235,10 @@ class Tree () :
         torch.save(dict, os.path.join(recent_dir, 'tree.tar'))
         torch.save(dict, os.path.join(time_dir, 'tree.tar'))
 
-    def load (self, path=None) :
-        if path is None:
-            path = os.path.join(self.directory, 'recent', 'tree.tar')
+    def load (self, id=None) :
+        if id is None:
+            id = 'recent'
+        path = os.path.join(self.directory, id, 'tree.tar')
         dict = torch.load(path)
         for key, value in dict.items():
             self.__dict__[key] = value
@@ -240,7 +256,10 @@ class Tree () :
     def initial (self, batch_size) :
         return States(self, batch_size)
 
+
+
 class States () :
+
     def __init__ (self, tree : Tree, batch_size) :
         self.tree = tree
         self.batch_size = batch_size
@@ -251,8 +270,8 @@ class States () :
         self.terminal = False
 
     def observations (self) -> torch.Tensor:
-        expected_value = torch.index_select(self.tree.self.expected_value, 0, self.indices)
-        legal = torch.index_select(self.tree.self.legal, 0, self.indices)
+        expected_value = torch.index_select(self.tree.expected_value, 0, self.indices)
+        legal = torch.index_select(self.tree.legal, 0, self.indices)
         observations_1 = torch.cat([expected_value, legal], dim=1)
         observations_2 = torch.cat([-expected_value, legal], dim=1).swapaxes(2, 3)
         observations = torch.stack([observations_1, observations_2], dim=1)
@@ -268,9 +287,9 @@ class States () :
             self.actions_2 = actions
             self.turns = 1 - self.turns
 
-            index = torch.index_select(self.tree.self.index, 0, self.indices)
-            chance = torch.index_select(self.tree.self.chance, 0, self.indices)
-            value = torch.index_select(self.tree.self.value, 0, self.indices)
+            index = torch.index_select(self.tree.index, 0, self.indices)
+            chance = torch.index_select(self.tree.chance, 0, self.indices)
+            value = torch.index_select(self.tree.value, 0, self.indices)
             chance_entry = chance[torch.arange(self.batch_size), :, self.actions_1, self.actions_2]
             index_entry = index[torch.arange(self.batch_size), :, self.actions_1, self.actions_2]
             value_entry = value[torch.arange(self.batch_size), :, self.actions_1, self.actions_2] 
@@ -284,15 +303,17 @@ class States () :
         rewards = torch.stack((rewards_1, -rewards_1), dim=1)
         return rewards
 
-# A batch of entire episode trajectories
+
 
 class Episodes () :
+    """
+    This represents a sequence of States, with dim=0 being time
+    """
+
     def __init__ (self, tree : Tree, batch_size) :
         self.tree = tree
         self.batch_size = batch_size
-        self.states = tree.initial(batch_size)
-
-        # below all have time dimentions at index=0
+        self.states = States(tree, batch_size)
 
         self.turns = None
         self.observations = None
@@ -302,10 +323,10 @@ class Episodes () :
         self.values = None
         self.t_eff = 0
 
-    # Play out batch episodes and save trajectories
-
     def generate (self, net : torch.nn.Module) :
-
+        """
+        Play a batch of episodes with a given actor net
+        """
         values_list = []
         indices_list = []
         turns_list = []
@@ -324,9 +345,9 @@ class Episodes () :
             observations = self.states.observations()
             with torch.no_grad():
                 logits, policy, value, actions = net.forward(observations)
-            ###
+
             rewards = self.states.step(actions)
-            ###
+
             values_list.append(value.squeeze().detach().clone())
             observations_list.append(observations.clone())
             policy_list.append(policy)
@@ -345,19 +366,4 @@ class Episodes () :
         net.train()
 
 if __name__ == '__main__' :
-    
-    logging.basicConfig(level=logging.DEBUG)
-
-    depth_bound_lambda = lambda tree : max(0, tree.depth_bound - (1 if random.random() < .5 else 2))
-
-    tree = Tree(
-        max_actions=2,
-        depth_bound=9,
-        max_transitions=2,
-        depth_bound_lambda=depth_bound_lambda
-        )
-    # tree._generate()
-    tree.load()
-    # tree.save()
-    print(tree.value.shape)
-    # tree._assert_index_is_tree()
+    pass
