@@ -1,4 +1,7 @@
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
 import pygambit
 import numpy as np
 import random
@@ -220,6 +223,7 @@ class Tree () :
         self.expected_value = torch.cat(tuple(child.expected_value for child in child_list), dim=0)
         self.legal = torch.cat(tuple(child.legal for child in child_list), dim=0)
         self.chance = torch.cat(tuple(child.chance for child in child_list), dim=0)
+        self.chance *= self.legal # TODO nash_conv code cant currently assume this has been done 
         self.index = torch.cat(tuple(child.index for child in child_list), dim=0)
         self.payoff = torch.cat(tuple(child.payoff for child in child_list), dim=0)
         self.nash = torch.cat(tuple(child.nash for child in child_list), dim=0)
@@ -294,14 +298,14 @@ class States () :
             index_entry = index[torch.arange(self.batch_size), :, self.actions_1, self.actions_2]
             value_entry = value[torch.arange(self.batch_size), :, self.actions_1, self.actions_2] 
             actions_chance = torch.multinomial(chance_entry, num_samples=1).squeeze()
+            #actions_chance includes the action dim=1 of the chance player
             self.indices = index_entry[torch.arange(self.batch_size), actions_chance]
             rewards_1 = value_entry[torch.arange(self.batch_size), actions_chance]
             rewards_1 *= (self.indices == 0)
             self.actions_1 = None
             self.actions_2 = None
         self.terminal = torch.all(self.indices == 0).item()
-        rewards = torch.stack((rewards_1, -rewards_1), dim=1)
-        return rewards
+        return rewards_1
 
 
 
