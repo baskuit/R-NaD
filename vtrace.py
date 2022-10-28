@@ -24,5 +24,7 @@ def transform_rewards (
             pi_reg = net_reg.forward_policy(observations)
             pi_reg_prev = net_reg_prev.forward_policy(observations)
         pi_interp = alpha * pi_reg + (1 - alpha) * pi_reg_prev
+        log_diff = torch.log(pi) - torch.log(pi_interp)
+        log_diff_action = log_diff[torch.arange(episodes.batch_size), episodes.actions[t]]
         sign = -torch.pow(-1, episodes.turns[t])
-        episodes.rewards[t] += sign * eta * (torch.log(pi) - torch.log(pi_interp))
+        episodes.rewards[t] += sign * eta * log_diff_action
