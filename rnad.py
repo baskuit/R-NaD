@@ -52,6 +52,9 @@ class RNaD () :
         self.epsilon_threshold = epsilon_threshold
         self.n_discrete = n_discrete
 
+        saved_runs_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs')    
+        if not os.path.exists(saved_runs_dir):
+            os.mkdir(saved_runs_dir)
         if directory_name is None:
             # poverty name
             directory_name = str(int(time.perf_counter()))
@@ -159,7 +162,7 @@ if __name__ == '__main__' :
 
     
 
-    test_run = RNaD(tree_id='1666799117', directory_name='test')
+    test_run = RNaD(tree_id='1667036398', directory_name='test')
     test_run.initialize()
 
     test_run.resume()
