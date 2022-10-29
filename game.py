@@ -53,9 +53,6 @@ class Tree () :
         self.depth_bound=depth_bound
         self.transition_threshold=transition_threshold
         self.terminal_values=terminal_values
-        self.row_actions_lambda=row_actions_lambda
-        self.col_actions_lambda=col_actions_lambda
-        self.depth_bound_lambda=depth_bound_lambda
         self.directory = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_trees')
 
         value_shape = (1, max_transitions, max_actions, max_actions)
@@ -69,7 +66,10 @@ class Tree () :
         self.index = torch.zeros(value_shape, device=device, dtype=torch.long)
         self.payoff = torch.zeros((1, 1), device=device, dtype=torch.float)
         self.nash = torch.zeros(nash_shape, device=device, dtype=torch.float)
-        self.saved_keys = ['max_actions','max_transitions','depth_bound','value','expected_value','legal','chance','index','payoff','nash']
+        self.saved_keys = [key for key in self.__dict__.keys()]
+        self.row_actions_lambda=row_actions_lambda
+        self.col_actions_lambda=col_actions_lambda
+        self.depth_bound_lambda=depth_bound_lambda
 
     def _child (self):
         child = Tree(
@@ -84,8 +84,8 @@ class Tree () :
             col_actions_lambda=self.col_actions_lambda,
             depth_bound_lambda=self.depth_bound_lambda,
         )
-        child.row_actions = self.row_actions_lambda(self)
-        child.col_actions = self.col_actions_lambda(self)
+        child.row_actions = max(0, self.row_actions_lambda(self))
+        child.col_actions = max(0, self.col_actions_lambda(self))
         return child
 
     def _transition_probs (self, rows, cols, n_trans, transition_threshold) :
@@ -156,7 +156,7 @@ class Tree () :
                         # TODO index messed up, maybe because copy?
                         child = self._child()
 
-                        if child.depth_bound > 0:
+                        if child.depth_bound > 0 and child.row_actions * child.col_actions > 0:
                             child._generate()
                             child_list.append(child)
                             lengths.append(child.value.shape[0]-1)
@@ -229,6 +229,8 @@ class Tree () :
         self.nash = torch.cat(tuple(child.nash for child in child_list), dim=0)
 
     def save (self):
+        if not os.path.exists(self.directory):
+            os.mkdir(self.directory)
         recent_dir = os.path.join(self.directory, 'recent')
         if not os.path.exists(recent_dir):
             os.mkdir(recent_dir)
@@ -370,4 +372,19 @@ class Episodes () :
         net.train()
 
 if __name__ == '__main__' :
-    pass
+
+    tree = Tree(
+        max_actions=4,
+        max_transitions=2,
+        transition_threshold=.45,
+        row_actions_lambda=lambda tree:tree.row_actions - (random.random() < .2),
+        col_actions_lambda=lambda tree:tree.row_actions - (random.random() < .2),
+        depth_bound_lambda=lambda tree:tree.depth_bound - 1 - (random.random() < .5),
+        depth_bound=8,
+    )
+
+    tree._generate()
+
+    print(tree.value.shape)
+
+    tree.save()
