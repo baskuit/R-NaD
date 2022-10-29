@@ -73,17 +73,6 @@ def max_min (tree : game.Tree, policy : torch.Tensor, root_index=1, depth=0):
     max_1 = torch.max(prod_1).item()
     min_2 = torch.min(prod_2).item()
 
-    if depth < 4:
-        print(depth)
-
-    # if root_index == 1:
-    #     print(tree.expected_value[1, 0, :, :])
-    #     print(matrix_1)
-    #     print(matrix_2)
-    #     print(pi_1)
-    #     print(pi_2)
-    #     print(prod_1)
-    #     print(prod_2)
     return max_1, min_2
 
 
