@@ -374,13 +374,13 @@ class Episodes () :
 if __name__ == '__main__' :
 
     tree = Tree(
-        max_actions=4,
+        max_actions=2,
         max_transitions=2,
         transition_threshold=.45,
         row_actions_lambda=lambda tree:tree.row_actions - (random.random() < .2),
         col_actions_lambda=lambda tree:tree.row_actions - (random.random() < .2),
         depth_bound_lambda=lambda tree:tree.depth_bound - 1 - (random.random() < .5),
-        depth_bound=8,
+        depth_bound=18,
     )
 
     tree._generate()
