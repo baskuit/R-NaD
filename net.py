@@ -6,9 +6,8 @@ import time
 import logging
 import random
 
-import game
-import vtrace
-import metric
+# import vtrace
+# import metric
 
 class CrossConv (nn.Module) :
  
@@ -92,6 +91,10 @@ class ConvNet (nn.Module):
 
 if __name__ == '__main__' :
 
+
+    import game
+    import metric
+
     def speed_test (net):
         start_generating = time.perf_counter()
         # Speed test
@@ -119,13 +122,8 @@ if __name__ == '__main__' :
         # depth_bound_lambda=depth_bound_lambda
     )
 
-    # tree._generate()
+    tree._generate()
     print('tree generated, size: ', tree.value.shape)
-
-    large_saved_tree_id = "1666799117"
-    tree.load(large_saved_tree_id)
-    logging.debug("Tree {} loaded, legal tensor has shape {}".format(large_saved_tree_id, tree.legal.shape))
-    # tree._assert_index_is_tree()
     tree.to(torch.device('cuda:0'))
 
    
@@ -133,13 +131,6 @@ if __name__ == '__main__' :
     net_channels=32
     net_depth=1
     net =  ConvNet(size=tree.max_actions, channels=net_channels, depth=net_depth, device=tree.device)
-    net_ = ConvNet(size=tree.max_actions, channels=net_channels, depth=net_depth, device=tree.device)
-
-    # episodes = game.Episodes(tree, batch_size)
-    # episodes.generate(net)
-    # print(episodes.rewards)
-    # vtrace.transform_rewards(episodes, net, net_, net_, .2)
-    # print(episodes.rewards)
 
     expl = metric.nash_conv(tree, net)
     print(expl)
