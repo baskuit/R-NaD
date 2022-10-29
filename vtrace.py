@@ -28,3 +28,18 @@ def transform_rewards (
         log_diff_action = log_diff[torch.arange(episodes.batch_size), episodes.actions[t]]
         sign = -torch.pow(-1, episodes.turns[t])
         episodes.rewards[t] += sign * eta * log_diff_action
+
+if __name__ == '__main__':
+    import game 
+    import net
+
+    tree = game.Tree()
+    tree.load('recent')
+
+    net_ = net.ConvNet(size=tree.max_actions, channels=2**5)
+
+    episodes = Episodes(tree, 1)
+    episodes.generate(net_)
+
+    for key, value in episodes.__dict__.items():
+        
