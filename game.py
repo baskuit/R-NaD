@@ -30,6 +30,8 @@ class Tree () :
         device=torch.device('cpu'),
         max_actions=3,
         max_transitions=1,
+        row_actions=None,
+        col_actions=None,
         depth_bound=1, # upper bound on longest path from root, and a strict bound when longest path =0
         transition_threshold=0,
         terminal_values=[-1, 1],
@@ -44,12 +46,15 @@ class Tree () :
         if depth_bound_lambda is None:
             depth_bound_lambda = lambda tree : tree.depth_bound - 1
 
+        if row_actions is None: row_actions = max_actions
+        if col_actions is None: col_actions = max_actions
+
         self.is_root=is_root
         self.device=device
         self.max_actions=max_actions
         self.max_transitions=max_transitions
-        self.row_actions=max_actions
-        self.col_actions=max_actions
+        self.row_actions=row_actions
+        self.col_actions=col_actions
         self.depth_bound=depth_bound
         self.transition_threshold=transition_threshold
         self.terminal_values=terminal_values
@@ -77,15 +82,15 @@ class Tree () :
             device=self.device,
             max_actions=self.max_actions,
             max_transitions=self.max_transitions,
-            depth_bound=self.depth_bound_lambda(self),
+            row_actions=min(self.max_actions, max(1, self.row_actions_lambda(self))),
+            col_actions=min(self.max_actions, max(1, self.col_actions_lambda(self))),
+            depth_bound=min(self.max_actions, max(0, self.depth_bound_lambda(self))),
             transition_threshold=self.transition_threshold,
             terminal_values=self.terminal_values,
             row_actions_lambda=self.row_actions_lambda,
             col_actions_lambda=self.col_actions_lambda,
             depth_bound_lambda=self.depth_bound_lambda,
         )
-        child.row_actions = max(0, self.row_actions_lambda(self))
-        child.col_actions = max(0, self.col_actions_lambda(self))
         return child
 
     def _transition_probs (self, rows, cols, n_trans, transition_threshold) :
@@ -140,20 +145,15 @@ class Tree () :
     def _generate (self):
 
         child_list : list[Tree] = []
-        lengths : list[int] = [] # cant use comprehension on child_list since that doesn't include the required 0 entries for terminal states
+        lengths : list[int] = []
         idx = 2
         for row in range(self.row_actions):
             for col in range(self.col_actions):
-
                 for chance in range(self.max_transitions):
 
                     transition_prob = self.chance[0, chance, row, col]
-                    # logging.log(level=0, msg=self.chance.shape)
 
                     if transition_prob > 0:
-
-                        #create new tree
-                        # TODO index messed up, maybe because copy?
                         child = self._child()
 
                         if child.depth_bound > 0 and child.row_actions * child.col_actions > 0:
@@ -165,14 +165,12 @@ class Tree () :
                             child_payoff = child.payoff[:1]
 
                         else:
-                            #node is terminal
                             lengths.append(0)
                             child_payoff = torch.tensor(((random.choice(self.terminal_values),),)).to(self.device)
                         
                         self.value[0, chance, row, col] = child_payoff.item()
-
                 self.expected_value[0, 0, row, col] = torch.sum(self.value[0, :, row, col] * self.chance[0, :, row, col])
-
+        
         # Get NE payoff and strategies of parent expected value matrix
         matrix = self.expected_value[0, 0, :self.row_actions, :self.col_actions]
         solutions = self._solve(matrix, self.max_actions)
@@ -211,15 +209,14 @@ class Tree () :
                 max_actions=self.max_actions,
                 max_transitions=self.max_transitions,
                 depth_bound=0,
+                row_actions=1,
+                col_actions=1,
             )
-            terminal_state.row_actions = 0
-            terminal_state.col_actions = 0
             terminal_state.chance[0,:,0,0] = 0
             terminal_state.chance[0,0,0,0] = 1
             child_list.insert(0, terminal_state)
 
         self.value = torch.cat(tuple(child.value for child in child_list), dim=0)
-
         self.expected_value = torch.cat(tuple(child.expected_value for child in child_list), dim=0)
         self.legal = torch.cat(tuple(child.legal for child in child_list), dim=0)
         self.chance = torch.cat(tuple(child.chance for child in child_list), dim=0)
@@ -300,7 +297,6 @@ class States () :
             index_entry = index[torch.arange(self.batch_size), :, self.actions_1, self.actions_2]
             value_entry = value[torch.arange(self.batch_size), :, self.actions_1, self.actions_2] 
             actions_chance = torch.multinomial(chance_entry, num_samples=1).squeeze()
-            #actions_chance includes the action dim=1 of the chance player
             self.indices = index_entry[torch.arange(self.batch_size), actions_chance]
             rewards_1 = value_entry[torch.arange(self.batch_size), actions_chance]
             rewards_1 *= (self.indices == 0)
@@ -322,12 +318,16 @@ class Episodes () :
         self.states = States(tree, batch_size)
 
         self.turns = None
+        self.indices = None
         self.observations = None
         self.policy = None
         self.actions = None
         self.rewards = None
         self.values = None
-        self.t_eff = 0
+        self.t_eff = -1
+
+        self.q_estimates = None
+        self.v_estimates = None
 
     def generate (self, net : torch.nn.Module) :
         """
@@ -349,11 +349,10 @@ class Episodes () :
             turns_list.append(self.states.turns.clone())
         
             observations = self.states.observations()
+
             with torch.no_grad():
                 logits, policy, value, actions = net.forward(observations)
-
             rewards = self.states.step(actions)
-
             values_list.append(value.squeeze().detach().clone())
             observations_list.append(observations.clone())
             policy_list.append(policy)
@@ -363,11 +362,15 @@ class Episodes () :
 
         #ends just before the all 0 indices tensor
         self.values = torch.stack(values_list, dim=0)
+        self.indices = torch.stack(indices_list, dim=0)
         self.turns = torch.stack(turns_list, dim=0)
         self.observations = torch.stack(observations_list, dim=0)
         self.policy = torch.stack(policy_list, dim=0)
         self.actions = torch.stack(actions_list, dim=0)
         self.rewards = torch.stack(rewards_list, dim=0)
+
+        self.q_estimates = torch.zeros_like(self.policy)
+        self.v_estimates = torch.zeros_like(self.rewards)
 
         net.train()
 
@@ -375,16 +378,18 @@ if __name__ == '__main__' :
 
     tree = Tree(
         max_actions=2,
-        max_transitions=2,
+        max_transitions=1,
         transition_threshold=.45,
         row_actions_lambda=lambda tree:tree.row_actions - (random.random() < .2),
         col_actions_lambda=lambda tree:tree.row_actions - (random.random() < .2),
         depth_bound_lambda=lambda tree:tree.depth_bound - 1 - (random.random() < .5),
-        depth_bound=18,
+        depth_bound=3,
     )
 
     tree._generate()
 
     print(tree.value.shape)
+    print(tree.legal)
+    print(tree.row_actions, tree.col_actions)
 
     tree.save()
