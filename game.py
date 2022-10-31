@@ -37,7 +37,8 @@ class Tree () :
         terminal_values=[-1, 1],
         row_actions_lambda=None,
         col_actions_lambda=None,
-        depth_bound_lambda=None,):
+        depth_bound_lambda=None,
+        desc=''):
     
         if row_actions_lambda is None:
             row_actions_lambda = lambda tree : tree.row_actions - 0
@@ -71,6 +72,7 @@ class Tree () :
         self.index = torch.zeros(value_shape, device=device, dtype=torch.long)
         self.payoff = torch.zeros((1, 1), device=device, dtype=torch.float)
         self.nash = torch.zeros(nash_shape, device=device, dtype=torch.float)
+        self.desc=desc
         self.saved_keys = [key for key in self.__dict__.keys()]
         self.row_actions_lambda=row_actions_lambda
         self.col_actions_lambda=col_actions_lambda
@@ -84,7 +86,7 @@ class Tree () :
             max_transitions=self.max_transitions,
             row_actions=min(self.max_actions, max(1, self.row_actions_lambda(self))),
             col_actions=min(self.max_actions, max(1, self.col_actions_lambda(self))),
-            depth_bound=min(self.max_actions, max(0, self.depth_bound_lambda(self))),
+            depth_bound=max(0, self.depth_bound_lambda(self)),
             transition_threshold=self.transition_threshold,
             terminal_values=self.terminal_values,
             row_actions_lambda=self.row_actions_lambda,
@@ -143,7 +145,6 @@ class Tree () :
         return torch.tensor(solutions, dtype=torch.float).to(self.device)
 
     def _generate (self):
-
         child_list : list[Tree] = []
         lengths : list[int] = []
         idx = 2
@@ -316,6 +317,9 @@ class Episodes () :
         self.tree = tree
         self.batch_size = batch_size
         self.states = States(tree, batch_size)
+        self.generation_time = 0
+        self.transformation_time = 0
+        self.estimation_time = 0
 
         self.turns = None
         self.indices = None
@@ -324,6 +328,7 @@ class Episodes () :
         self.actions = None
         self.rewards = None
         self.values = None
+        self.masks = None
         self.t_eff = -1
 
         self.q_estimates = None
@@ -340,9 +345,11 @@ class Episodes () :
         policy_list = []
         actions_list = []
         rewards_list = []
+        masks_list = []
 
         net.eval()
-        
+        time_start = time.perf_counter()
+
         while not self.states.terminal:
 
             indices_list.append(self.states.indices.clone())
@@ -354,11 +361,15 @@ class Episodes () :
                 logits, policy, value, actions = net.forward(observations)
             rewards = self.states.step(actions)
             values_list.append(value.squeeze().detach().clone())
-            observations_list.append(observations.clone())
+            observations_list.append(observations)
+            masks_list.append(observations[:, 1, :, 0])
             policy_list.append(policy)
             actions_list.append(actions.clone())
             rewards_list.append(rewards.clone())
             self.t_eff += 1
+
+        time_end = time.perf_counter()
+        self.generation_time = time_end - time_start
 
         #ends just before the all 0 indices tensor
         self.values = torch.stack(values_list, dim=0)
@@ -369,21 +380,35 @@ class Episodes () :
         self.actions = torch.stack(actions_list, dim=0)
         self.rewards = torch.stack(rewards_list, dim=0)
 
+        self.masks = torch.stack(masks_list, dim=0)
         self.q_estimates = torch.zeros_like(self.policy)
         self.v_estimates = torch.zeros_like(self.rewards)
 
         net.train()
+    
+    def display (self,):
+        print('\n\n\n')
+        for key, value in self.__dict__.items():
+            if torch.torch.is_tensor(value):
+                if torch.numel(value) > 20:
+                    value = value.shape
+            print(key, value)
+
 
 if __name__ == '__main__' :
+
+    logging.basicConfig(level=logging.DEBUG)
+
 
     tree = Tree(
         max_actions=2,
         max_transitions=1,
         transition_threshold=.45,
-        row_actions_lambda=lambda tree:tree.row_actions - (random.random() < .2),
-        col_actions_lambda=lambda tree:tree.row_actions - (random.random() < .2),
-        depth_bound_lambda=lambda tree:tree.depth_bound - 1 - (random.random() < .5),
-        depth_bound=3,
+        row_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
+        col_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
+        depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 4 * (random.random() < .5),
+        depth_bound=16,
+        desc='highly variable trajectory length tree'
     )
 
     tree._generate()
