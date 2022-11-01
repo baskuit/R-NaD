@@ -49,6 +49,7 @@ class Tree () :
 
         if row_actions is None: row_actions = max_actions
         if col_actions is None: col_actions = max_actions
+        self.depth=0
 
         self.is_root=is_root
         self.device=device
@@ -147,7 +148,7 @@ class Tree () :
     def _generate (self):
         child_list : list[Tree] = []
         lengths : list[int] = []
-        idx = 2
+        # idx = 1
         for row in range(self.row_actions):
             for col in range(self.col_actions):
                 for chance in range(self.max_transitions):
@@ -160,9 +161,9 @@ class Tree () :
                         if child.depth_bound > 0 and child.row_actions * child.col_actions > 0:
                             child._generate()
                             child_list.append(child)
-                            lengths.append(child.value.shape[0]-1)
-                            self.index[0, chance, row, col] = idx
-                            idx += 1
+                            lengths.append(child.value.shape[0])
+                            self.index[0, chance, row, col] = 1
+                            # idx += 1
                             child_payoff = child.payoff[:1]
 
                         else:
@@ -171,7 +172,10 @@ class Tree () :
                         
                         self.value[0, chance, row, col] = child_payoff.item()
                 self.expected_value[0, 0, row, col] = torch.sum(self.value[0, :, row, col] * self.chance[0, :, row, col])
-        
+        if child_list:
+            self.depth = 1 + max(child.depth for child in child_list)
+        else:
+            self.depth = 1
         # Get NE payoff and strategies of parent expected value matrix
         matrix = self.expected_value[0, 0, :self.row_actions, :self.col_actions]
         solutions = self._solve(matrix, self.max_actions)
@@ -183,26 +187,29 @@ class Tree () :
         self.payoff = torch.matmul(torch.matmul(pi_1, matrix), pi_2)
 
         self.nash = pi.unsqueeze(dim=0)
-
-        # Update parent index tensor
-        _ = 0 
-        for row in range(self.row_actions):
-            for col in range(self.col_actions):
-                for chance in range(self.max_transitions):
-                    if self.index[0, chance, row, col] != 0:
-                        self.index[0, chance, row, col] += sum(lengths[:_])
-                        _ += 1
+                        
 
         # Update child index tensors
         for _, child in enumerate(child_list):
             mask = child.index.clone()
             mask[mask > 0] = 1.
-            mask *= sum(lengths[:_]) + _ + 1
+            mask *= sum(lengths[:_]) + 1
             child.index += mask
-        
+
+        # Update root index tensor
+        _ = 0
+        sum_ = 0
+        lengths.insert(0, 1)
+        for row in range(self.row_actions):
+            for col in range(self.col_actions):
+                for chance in range(self.max_transitions):
+                    if self.chance[0, chance, row, col] != 0:
+                        sum_ += lengths[_]
+                        self.index[0, chance, row, col] *= sum_
+                        _ += 1
+                        # print(sum_)
         
         child_list.insert(0, self)
-
         if self.is_root:
             terminal_state = Tree(
                 is_root=False,
@@ -217,6 +224,7 @@ class Tree () :
             terminal_state.chance[0,0,0,0] = 1
             child_list.insert(0, terminal_state)
 
+
         self.value = torch.cat(tuple(child.value for child in child_list), dim=0)
         self.expected_value = torch.cat(tuple(child.expected_value for child in child_list), dim=0)
         self.legal = torch.cat(tuple(child.legal for child in child_list), dim=0)
@@ -225,6 +233,9 @@ class Tree () :
         self.index = torch.cat(tuple(child.index for child in child_list), dim=0)
         self.payoff = torch.cat(tuple(child.payoff for child in child_list), dim=0)
         self.nash = torch.cat(tuple(child.nash for child in child_list), dim=0)
+
+        if self.is_root:
+            self.index += (self.index != 0)
 
     def save (self):
         if not os.path.exists(self.directory):
@@ -399,22 +410,23 @@ if __name__ == '__main__' :
 
     logging.basicConfig(level=logging.DEBUG)
 
-
     tree = Tree(
         max_actions=2,
         max_transitions=1,
         transition_threshold=.45,
         row_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
         col_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
-        depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 4 * (random.random() < .5),
-        depth_bound=16,
-        desc='highly variable trajectory length tree'
+        depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 1 * (random.random() < .5),
+        depth_bound=13,
+        desc='simple tree cus tree assertion failing'
     )
-
     tree._generate()
-
-    print(tree.value.shape)
-    print(tree.legal)
-    print(tree.row_actions, tree.col_actions)
-
+    # print(tree.index)
+    tree._assert_index_is_tree()
     tree.save()
+    tree.load()
+    logging.debug('Tree parameters :')
+    for key, value in tree.__dict__.items():
+        if torch.torch.is_tensor(value):
+            value = value.shape
+        logging.debug('{}: {}'.format(key, value))
