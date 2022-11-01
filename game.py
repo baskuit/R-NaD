@@ -176,6 +176,8 @@ class Tree () :
             self.depth = 1 + max(child.depth for child in child_list)
         else:
             self.depth = 1
+
+
         # Get NE payoff and strategies of parent expected value matrix
         matrix = self.expected_value[0, 0, :self.row_actions, :self.col_actions]
         solutions = self._solve(matrix, self.max_actions)
@@ -183,6 +185,7 @@ class Tree () :
             logging.error('matrix still not solved by _solve')
             logging.error(matrix)
         pi = solutions[0]
+        
         pi_1, pi_2 = pi[:self.row_actions].unsqueeze(dim=0), pi[self.max_actions:][:self.col_actions].unsqueeze(dim=1)
         self.payoff = torch.matmul(torch.matmul(pi_1, matrix), pi_2)
 
@@ -207,7 +210,6 @@ class Tree () :
                         sum_ += lengths[_]
                         self.index[0, chance, row, col] *= sum_
                         _ += 1
-                        # print(sum_)
         
         child_list.insert(0, self)
         if self.is_root:
@@ -409,6 +411,8 @@ class Episodes () :
 if __name__ == '__main__' :
 
     logging.basicConfig(level=logging.DEBUG)
+    import net
+    import metric
 
     tree = Tree(
         max_actions=2,
@@ -417,16 +421,25 @@ if __name__ == '__main__' :
         row_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
         col_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
         depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 1 * (random.random() < .5),
-        depth_bound=13,
-        desc='simple tree cus tree assertion failing'
+        depth_bound=14,
+        desc='bigger but still testing'
     )
     tree._generate()
-    # print(tree.index)
+    print(tree.index.shape)
     tree._assert_index_is_tree()
-    tree.save()
-    tree.load()
-    logging.debug('Tree parameters :')
-    for key, value in tree.__dict__.items():
-        if torch.torch.is_tensor(value):
-            value = value.shape
-        logging.debug('{}: {}'.format(key, value))
+    a, b = metric.max_min(tree, tree.nash)
+    print(a, b)
+    print(a - b)
+    # tree.load()
+
+    # for _ in range(tree.value.shape[0]):
+    #     print('\n', _)
+    #     print(tree.index[_])
+    #     print(tree.expected_value[_])
+    #     print(tree.nash[_])
+    #     print(tree.legal[_])
+
+
+    # net = net.ConvNet(tree.max_actions, 1, 1)
+    # expl = metric.nash_conv(tree, net, 1000)
+    # print(expl)

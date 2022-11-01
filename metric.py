@@ -32,6 +32,7 @@ def nash_conv (tree : game.Tree, net : net.ConvNet, inference_batch_size=10**5) 
             policy[slice_range, tree.max_actions:] = net.forward_policy(inference_slice).to(torch.device('cpu'))
 
     net.train()
+    print(policy[1])
     max_1, min_2 = max_min(tree, policy)
 
     exploitability = max_1 - min_2
@@ -68,8 +69,10 @@ def max_min (tree : game.Tree, policy : torch.Tensor, root_index=1, depth=0):
     pi = policy[root_index]
     pi_1, pi_2 = pi[:tree.max_actions].unsqueeze(dim=0), pi[tree.max_actions:].unsqueeze(dim=1)
 
-    prod_1 = torch.matmul(matrix_1, pi_2)
-    prod_2 = torch.matmul(pi_1, matrix_2)
+    row_actions_mask = tree.legal[root_index, 0, :, 0].to(torch.bool)
+    col_actions_mask = tree.legal[root_index, 0, 0, :].to(torch.bool)
+    prod_1 = torch.flatten(torch.matmul(matrix_1, pi_2))[row_actions_mask]
+    prod_2 = torch.flatten(torch.matmul(pi_1, matrix_2))[col_actions_mask]
     max_1 = torch.max(prod_1).item()
     min_2 = torch.min(prod_2).item()
 
@@ -84,6 +87,7 @@ if __name__ == '__main__' :
     tree = game.Tree()
     tree.load('recent')
     tree._assert_index_is_tree()
-    net = net.ConvNet(tree.max_actions, 1, 1)
-    expl = nash_conv(tree, net, 1000)
-    print(expl)
+    # net = net.ConvNet(tree.max_actions, 1, 1)
+    # expl = nash_conv(tree, net, 1000)
+    # print(expl)
+    print(max_min(tree, tree.nash, 1))
