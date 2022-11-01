@@ -156,7 +156,7 @@ def accumulate_gradients (
         observations_slice = episodes.observations[slice] 
         logits, policy, value, actions = net.forward(observations_slice)
 
-        logits_q = logits * episodes.q_estimates[slice]
+        logits_q = logits
 
         can_decrease = logits_q > -beta
         can_increase = logits_q <  beta
@@ -167,9 +167,12 @@ def accumulate_gradients (
         logits_q_negative[logits_q > 0] = 0
         logits_q_positive[logits_q < 0] = 0
         logits_q_clipped = (can_decrease * logits_q_negative + can_increase * logits_q_positive).detach()
-
+        cant = torch.logical_not(can_decrease) * torch.logical_not(can_increase) * episodes.masks[slice]
+        logit_saturation = torch.sum(cant) / torch.sum(episodes.masks[slice])
+        if logit_saturation:
+            print('logit_sat', logit_saturation)
         logits_q_clipped *= episodes.masks[slice]
-        policy_loss = -torch.sum(logits_q_clipped)
+        policy_loss = -torch.sum(logits_q_clipped * episodes.q_estimates[slice])
         value_loss = torch.sum(torch.abs(episodes.v_estimates[slice] - value))
         loss = (value_loss + policy_loss) / total_batch_size
         loss.backward()

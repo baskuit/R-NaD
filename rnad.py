@@ -158,7 +158,6 @@ class RNaD () :
             
             while self.n < delta_m:
                 alpha = self.alpha_lambda(self.n, delta_m)
-                print('alpha:', alpha)
 
                 if self.n % self.checkpoint_mod == 0:
                     self.save()
@@ -241,10 +240,10 @@ if __name__ == '__main__' :
     # make new tree
     test_run = RNaD(
         tree_id='1667264620', 
-        directory_name='third_higher_lr',
+        directory_name=str(int(time.time())),
         eta=.2,
         delta_m_0 = (100, 165, 200, 250),
-        delta_m_1 = (1000, 2000, 5000, 0), 
-        batch_size=128,
-        lr=.0005)
+        delta_m_1 = (1000, 5000, 2000, 0), 
+        batch_size=32,
+        lr=.00005)
     test_run.run()
