@@ -67,6 +67,7 @@ def max_min (tree : game.Tree, policy : torch.Tensor, root_index=1, depth=0):
     matrix_2 = torch.sum(matrix_2, dim=0)
 
     pi = policy[root_index]
+
     pi_1, pi_2 = pi[:tree.max_actions].unsqueeze(dim=0), pi[tree.max_actions:].unsqueeze(dim=1)
 
     row_actions_mask = tree.legal[root_index, 0, :, 0].to(torch.bool)
@@ -85,9 +86,14 @@ if __name__ == '__main__' :
     import game
     import net
     tree = game.Tree()
-    tree.load('recent')
+    tree.load('1667264620')
     tree._assert_index_is_tree()
     # net = net.ConvNet(tree.max_actions, 1, 1)
     # expl = nash_conv(tree, net, 1000)
     # print(expl)
-    print(max_min(tree, tree.nash, 1))
+    pi_1,pi_2 = tree.legal[:, 0, :, 0], tree.legal[:, 0, 0, :]
+    pi_1 = torch.nn.functional.normalize(pi_1, dim=1, p=1)
+    pi_2 = torch.nn.functional.normalize(pi_2, dim=1, p=1)
+    pi = torch.cat([pi_1, pi_2], dim=1)
+    print(pi[:10])
+    print(max_min(tree, pi, 1))
