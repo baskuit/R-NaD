@@ -118,12 +118,12 @@ def v_trace (
     time_end = time.perf_counter()
     episodes.estimation_time = time_end - time_start
 
-def learn (
+def accumulate_gradients (
     episodes : Episodes,
     net : net.ConvNet,
-    batch_size=None,
-    clip_neurd : float = 10_000,
-    beta :float = 2,
+    batch_size=1000,
+    clip_neurd= 10_000,
+    beta= 2,
     ):
 
     if batch_size is None:
@@ -171,8 +171,8 @@ def learn (
         logits_q_clipped *= episodes.masks[slice]
         policy_loss = -torch.sum(logits_q_clipped)
         value_loss = torch.sum(torch.abs(episodes.v_estimates[slice] - value))
-        loss = value_loss + policy_loss
-
+        loss = (value_loss + policy_loss) / total_batch_size
+        loss.backward()
 
 if __name__ == '__main__':
     import game 
@@ -195,7 +195,7 @@ if __name__ == '__main__':
     net_reg = net.ConvNet(size=tree.max_actions, channels=2**5, device=tree.device)
     net_reg_ = net.ConvNet(size=tree.max_actions, channels=2**5, device=tree.device)
 
-    episodes = Episodes(tree, batch_size=10**5)
+    episodes = Episodes(tree, batch_size=768)
     episodes.generate(net_)
 
     episodes.display()
@@ -205,4 +205,4 @@ if __name__ == '__main__':
 
     episodes.display()
 
-    learn(episodes, net_, batch_size=1000)
+    accumulate_gradients(episodes, net_, batch_size=1000)
