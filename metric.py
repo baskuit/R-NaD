@@ -26,12 +26,12 @@ def nash_conv (tree : game.Tree, net : net.ConvNet, inference_batch_size=10**5) 
         legal_slice = tree.legal[slice_range]
 
         inference_slice = torch.cat([value_slice, legal_slice], dim=1)
-        policy[slice_range, :tree.max_actions] = net.forward_policy(inference_slice).to(torch.device('cpu'))
-        inference_slice = torch.cat([-value_slice, legal_slice], dim=1).swapaxes(2, 3)
-        policy[slice_range, tree.max_actions:] = net.forward_policy(inference_slice).to(torch.device('cpu'))
+        with torch.no_grad():
+            policy[slice_range, :tree.max_actions] = net.forward_policy(inference_slice).to(torch.device('cpu'))
+            inference_slice = torch.cat([-value_slice, legal_slice], dim=1).swapaxes(2, 3)
+            policy[slice_range, tree.max_actions:] = net.forward_policy(inference_slice).to(torch.device('cpu'))
 
     net.train()
-
     max_1, min_2 = max_min(tree, policy)
 
     exploitability = max_1 - min_2
@@ -79,5 +79,11 @@ def max_min (tree : game.Tree, policy : torch.Tensor, root_index=1, depth=0):
     
 
 if __name__ == '__main__' :
-
-    pass
+    import game
+    import net
+    tree = game.Tree()
+    tree.load('recent')
+    tree._assert_index_is_tree()
+    net = net.ConvNet(tree.max_actions, 1, 1)
+    expl = nash_conv(tree, net, 1000)
+    print(expl)
