@@ -18,7 +18,7 @@ class RNaD () :
         tree_id : str,
         eta=.2,
         delta_m_0 = (100, 165, 200, 250),
-        delta_m_1 = (100, 1_000, 3_000, 0),
+        delta_m_1 = (1000, 2_000, 5_000, 0),
         lr=5*10**-5,
         beta=2,
         grad_clip=10**4,
@@ -110,16 +110,7 @@ class RNaD () :
             self.net_reg_ = self._new_net()
             self.net_reg_.load_state_dict(self.net.state_dict())
             self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
-            saved_dict = {
-                'net_params':self.net_params,
-                'net':self.net.state_dict(),
-                'net_target':self.net.state_dict(),
-                'net_reg':self.net.state_dict(),
-                'net_reg_':self.net.state_dict(),
-                'optimizer':self.optimizer.state_dict(),
-
-            }
-            torch.save(saved_dict, os.path.join(self.directory, '0', '0'))
+            self.save()
 
         else:
 
@@ -164,20 +155,13 @@ class RNaD () :
             print('may resume, delta m')
             print(may_resume, delta_m)
             print('m', self.m, 'n', self.n)
-            alpha = self.alpha_lambda(self.n, delta_m)
-            print('alpha', alpha)
-
+            
             while self.n < delta_m:
-                if self.n % self.checkpoint_mod == 0 and self.n > 0:
-                    saved_dict = {
-                        'net_params':self.net_params,
-                        'net':self.net.state_dict(),
-                        'net_target':self.net.state_dict(),
-                        'net_reg':self.net.state_dict(),
-                        'net_reg_':self.net.state_dict(),
-                        'optimizer':self.optimizer.state_dict(),
-                    }
-                    torch.save(saved_dict, os.path.join(self.directory, str(self.m), str(self.n)))
+                alpha = self.alpha_lambda(self.n, delta_m)
+                print('alpha:', alpha)
+
+                if self.n % self.checkpoint_mod == 0:
+                    self.save()
 
                 self.n += 1
 
@@ -216,7 +200,6 @@ class RNaD () :
                     params2[name1].data.copy_(
                         self.gamma * param1.data + (1-self.gamma)*params2[name1].data)
                 self.net_target.load_state_dict(params2)
-                print('n: ', self.n)
             # outerloop resume
 
             self.n = 0
@@ -226,14 +209,14 @@ class RNaD () :
 
             # NashConv
             print('starting NashConv calculation')
-            # self.tree.to(torch.device('cpu'))
             expl = metric.nash_conv(self.tree, self.net_reg, inference_batch_size=1000)
-            # self.tree.to(torch.device('cuda'))
             print('NashConv:', expl)
-            print('root strats', self.tree.nash[1])
             print(self.tree.expected_value[1])
-            print()
-
+            print('root strats', self.tree.nash[1])
+            print('payoff', self.tree.payoff[1])
+            # value_slice = self.tree.expected_value[self.tree.index[self.tree.index != 0]]
+            # torch.index_select(self.tree.expected_value, dim=0, )
+            
             may_resume, delta_m = self._get_delta_m()
 
     def run (self):
@@ -241,10 +224,27 @@ class RNaD () :
         self.initialize()
         self.resume()
 
+    def save (self):
+        saved_dict = {
+            'net_params':self.net_params,
+            'net':self.net.state_dict(),
+            'net_target':self.net.state_dict(),
+            'net_reg':self.net.state_dict(),
+            'net_reg_':self.net.state_dict(),
+            'optimizer':self.optimizer.state_dict(),
+        }
+        if not os.path.exists(os.path.join(self.directory, str(self.m))):
+            os.mkdir(os.path.join(self.directory, str(self.m)))
+        torch.save(saved_dict, os.path.join(self.directory, str(self.m), str(self.n)))
 
 if __name__ == '__main__' :
-
-    
     # make new tree
-    test_run = RNaD(tree_id='1667264620', directory_name='first',)
+    test_run = RNaD(
+        tree_id='1667264620', 
+        directory_name='third_higher_lr',
+        eta=.2,
+        delta_m_0 = (100, 165, 200, 250),
+        delta_m_1 = (1000, 2000, 5000, 0), 
+        batch_size=128,
+        lr=.0005)
     test_run.run()
