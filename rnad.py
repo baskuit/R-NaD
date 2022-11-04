@@ -23,7 +23,8 @@ class RNaD () :
         delta_m_1 = (1000, 2_000, 5_000, 0),
         lr=5*10**-5,
         beta=2,
-        grad_clip=10**4,
+        neurd_clip=10**3,
+        grad_clip=10**3,
         b1_adam=0,
         b2_adam=.999,
         epsilon_adam=10**-8,
@@ -45,6 +46,7 @@ class RNaD () :
         self.delta_m_1 = delta_m_1
         self.lr = lr
         self.beta = beta
+        self.neurd_clip = neurd_clip
         self.grad_clip = grad_clip
         self.b1_adam = b1_adam
         self.b2_adam = b2_adam
@@ -80,7 +82,7 @@ class RNaD () :
         self.m = 0
         self.n = 0
 
-        self.net_params = {'size':self.tree.max_actions,'channels':2**7,'depth':1,'device':torch.device('cuda')}
+        self.net_params = {'size':self.tree.max_actions,'channels':2**7,'depth':2,'device':torch.device('cuda')}
         self.net:net.ConvNet = None
         self.net_target:net.ConvNet = None
         self.net_reg:net.ConvNet = None
@@ -148,13 +150,12 @@ class RNaD () :
         return True, self.delta_m_1[idx]
 
             
-    def resume (self) :        
+    def resume (self,
+    expl_mod=1) :        
         may_resume, delta_m = self._get_delta_m()
-
         while may_resume:
-            print('may resume, delta m')
-            print(may_resume, delta_m)
-            print('m', self.m, 'n', self.n)
+            print(self.m, delta_m)
+
             
             while self.n < delta_m:
                 alpha = self.alpha_lambda(self.n, delta_m)
@@ -181,18 +182,19 @@ class RNaD () :
                 self.net_target.load_state_dict(params2)
             # outerloop resume
 
+            if self.m % expl_mod == 0:
+                # NashConv
+                expl = metric.nash_conv(self.tree, self.net_reg, inference_batch_size=1000)
+                print('NashConv:', expl)
+                print('root strats', self.tree.nash[1])
+                print('payoff', self.tree.payoff[1])
+
             self.n = 0
             self.m += 1
             self.net_reg_ = self.net_reg
             self.net_reg = self.net_target
 
-            # NashConv
-            print('starting NashConv calculation')
-            expl = metric.nash_conv(self.tree, self.net_reg, inference_batch_size=1000)
-            print('NashConv:', expl)
-            print(self.tree.expected_value[1])
-            print('root strats', self.tree.nash[1])
-            print('payoff', self.tree.payoff[1])
+
             # value_slice = self.tree.expected_value[self.tree.index[self.tree.index != 0]]
             # torch.index_select(self.tree.expected_value, dim=0, )
             
@@ -257,14 +259,14 @@ class RNaD () :
                 player_id,
                 episodes.masks,
                 importance_sampling_correction,
-                clip=10_000,
+                clip=self.neurd_clip,
                 threshold=2.0,
             )
 
             loss = loss_v + loss_nerd
             loss.backward()
 
-            nn.utils.clip_grad_norm_(self.net.parameters(), 10_000)
+            nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip)
 
             avg_traj_len = valid.sum(0).mean(-1)
 
@@ -335,10 +337,11 @@ class RNaD () :
         return sum(loss_pi_list)
 
 
-    def run (self):
+    def run (self,
+    expl_mod=1):
 
         self.initialize()
-        self.resume()
+        self.resume(expl_mod=expl_mod)
 
     def save (self):
         saved_dict = {
@@ -354,14 +357,16 @@ class RNaD () :
         torch.save(saved_dict, os.path.join(self.directory, str(self.m), str(self.n)))
 
 if __name__ == '__main__' :
-    # make new tree
+    
     test_run = RNaD(
-        tree_id='recent', #3x3 
-        directory_name=str(int(time.time())),
-        eta=.2,
-        delta_m_0 = (100, 165, 200, 250),
-        delta_m_1 = (1000, 1000, 2000, 0), 
-        batch_size=700,
-        lr=.00005,
-        beta=10,)
-    test_run.run()
+tree_id='recent', # run game.py first to generate a tree
+directory_name=str(int(time.time())),
+eta=.2,
+delta_m_0 = (300, 500, 1000, 1000000),
+delta_m_1 = (1000, 3000, 5000, 0), 
+batch_size=2**7,
+lr=1e-4,
+grad_clip=1000,
+beta=10,
+        )
+    test_run.run(expl_mod=10)
