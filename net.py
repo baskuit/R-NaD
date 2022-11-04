@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import game
+
 import time
 import logging
 import random
@@ -86,6 +88,31 @@ class ConvNet (nn.Module):
         policy *= filter_row
         F.normalize(policy, dim=1, p=1)
         return policy
+
+    def forward_batch (self, episodes : game.Episodes) :
+
+        logit_list, log_policy_list, policy_list, value_list = [], [], [], [] 
+        for t in range(0, episodes.t_eff + 1):
+            observations = episodes.observations[t]
+            x = self.pre(observations)
+            for block in self.tower:
+                x = block(x)
+            x = x.view(-1, self.channels*(self.size**2))
+            logits = self.policy(x)
+            filter_row = observations[:, 1, :, 0].to(torch.bool)
+            exp_logits = torch.where(filter_row, torch.exp(logits), 0)
+            log_sum = torch.log(torch.sum(exp_logits, dim=-1, keepdim=True))
+            log_policy = torch.where(filter_row, logits - log_sum, 0)
+            policy = torch.nn.functional.normalize(exp_logits, dim=-1, p=1)
+            value = self.value(x)
+            logit_list.append(logits)
+            log_policy_list.append(log_policy)
+            policy_list.append(policy)
+            value_list.append(value)
+        return [torch.stack(_, dim=0) for _ in (logit_list, log_policy_list, policy_list, value_list)]
+
+
+
 
 
 
