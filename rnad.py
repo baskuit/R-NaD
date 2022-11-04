@@ -19,8 +19,8 @@ class RNaD () :
         # R-NaD parameters, see paper
         tree_id : str,
         eta=.2,
-        delta_m_0 = (100, 165, 200, 250),
-        delta_m_1 = (1000, 2_000, 5_000, 0),
+        delta_m_0 = (100, 165, 200,),
+        delta_m_1 = (10_000, 100_000, 35_000,),
         lr=5*10**-5,
         beta=2,
         neurd_clip=10**3,
@@ -31,7 +31,7 @@ class RNaD () :
         gamma=.001, #averaging for target net
         roh_bar=1,
         c_bar=1,
-        batch_size=768,
+        batch_size=3*2**8,
         epsilon_threshold=.03,
         n_discrete=32,
         # checkpoint. dont pass m,n since we either start from scratch or used saved
@@ -357,16 +357,32 @@ class RNaD () :
         torch.save(saved_dict, os.path.join(self.directory, str(self.m), str(self.n)))
 
 if __name__ == '__main__' :
-    
+    """"
+    These are the default main hyperparameters of the R-NaD algorithm.
+    In my earlier tests, I had success with small (~16) batches sizes
+    and higher (.01) learning rates
+    """
     test_run = RNaD(
-tree_id='recent', # run game.py first to generate a tree
-directory_name=str(int(time.time())),
-eta=.2,
-delta_m_0 = (300, 500, 1000, 1000000),
-delta_m_1 = (1000, 3000, 5000, 0), 
-batch_size=2**7,
-lr=1e-4,
-grad_clip=1000,
-beta=10,
+        eta=.2,
+        # schedule for number of steps before updating regularizer policies
+        # e.g. if m < 100 then delta_m = 10_000 etc
+        delta_m_0 = (100, 165, 200,),
+        delta_m_1 = (10_000, 100_000, 35_000,),
+        lr=5*10**-5,
+        batch_size=3*2**8,
+        beta=2, # logit clip
+        neurd_clip=10**4, # Q value clip
+        grad_clip=10**4, # gradient clip
+
+        # These probably aren't as important
+        b1_adam=0,
+        b2_adam=.999,
+        epsilon_adam=10**-8, # Adam optim params
+        gamma=.001, #averaging for target net
+        roh_bar=1,
+        c_bar=1,
+       
         )
-    test_run.run(expl_mod=10)
+
+    test_run.run(expl_mod=1) 
+    # expl mod is after how many steps to calculate NashConv. Set to 1 for large delta_m
