@@ -372,12 +372,15 @@ class Episodes () :
 
             with torch.no_grad():
                 logits, policy, value, actions = net.forward(observations)
+            # actions = torch.zeros_like(policy)
             rewards = self.states.step(actions)
+            actions_oh = torch.zeros_like(policy)
+            actions_oh[torch.arange(self.batch_size), actions] = 1
             values_list.append(value.squeeze().detach().clone())
             observations_list.append(observations)
             masks_list.append(observations[:, 1, :, 0])
             policy_list.append(policy)
-            actions_list.append(actions.clone())
+            actions_list.append(actions_oh)
             rewards_list.append(rewards.clone())
             self.t_eff += 1
 
@@ -417,12 +420,12 @@ if __name__ == '__main__' :
     tree = Tree(
         max_actions=3,
         max_transitions=1,
-        transition_threshold=.45,
+        # transition_threshold=.45,
         # row_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
         # col_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
         depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 1 * (random.random() < .7),
-        depth_bound=4,
-        desc='more actions so less "pass" states'
+        depth_bound=6,
+        desc='small'
     )
     tree._generate()
     tree.save()
