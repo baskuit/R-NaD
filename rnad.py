@@ -81,10 +81,10 @@ class RNaD () :
         self.n = 0
 
         self.net_params = {'size':self.tree.max_actions,'channels':2**7,'depth':1,'device':torch.device('cuda')}
-        self.net = None
-        self.net_target = None
-        self.net_reg = None
-        self.net_reg_ = None
+        self.net:net.ConvNet = None
+        self.net_target:net.ConvNet = None
+        self.net_reg:net.ConvNet = None
+        self.net_reg_:net.ConvNet = None
 
     def _new_net (self) -> nn.Module:
         # on cuda by default since large trees will have to be stored on cpu so may as well used shared memory with workers if it comes to that
@@ -205,28 +205,19 @@ class RNaD () :
     ):
 
             player_id = episodes.turns
-            action_oh = episodes.actions #TODO turn this idx into one hot TODO
+            action_oh = episodes.actions
             policy = episodes.policy
-            obs = episodes.observations
-            rewards = torch.stack([episodes.rewards, -episodes.rewards], dim=0) #TODO check dims for payer stacking
-            print('rewards shape:', rewards.shape)
-            print('obs shape:', obs.shape)
-            valid = episodes.masks #TODO check that its policy mask and not state mask is terminal
+            rewards = torch.stack([episodes.rewards, -episodes.rewards], dim=0)
+            valid = (episodes.indices != 0).to(torch.float)
             T = valid.shape[0]
 
-
-            logit, pi, v, _ = self.net.forward(torch.flatten(obs, 0, 1))
-            log_pi = torch.log(pi) #TODO check this is not actualy minused some baseline
+            logit, log_pi, pi, v = self.net.forward_batch(episodes)
             v_target_list, has_played_list, v_trace_policy_target_list = [], [], []
 
-            assert(v.shape == (episodes.t_eff, episodes.batch_size, 1))
-
             with torch.no_grad():
-                _, _, v, _ = self.net_target.forward(obs)
-                logit_reg, _, _, _ = self.net_reg.forward(obs)
-                logit_reg_, _, _, _ = self.net_reg_.forward(obs)
-                log_pi_reg = logit_reg - torch.sum(torch.exp(logit_reg)).unsqueeze(dim=-1)
-                log_pi_reg_ = logit_reg_ - torch.sum(torch.exp(logit_reg_)).unsqueeze(dim=-1)
+                _, _, _, v_target = self.net_target.forward_batch(episodes)
+                _, log_pi_reg, _, _ = self.net_reg.forward_batch(episodes)
+                _, log_pi_reg_, _, _ = self.net_reg_.forward_batch(episodes)
 
 
                 log_policy_reg = log_pi - (alpha * log_pi_reg + (1 - alpha) * log_pi_reg_)
@@ -258,7 +249,7 @@ class RNaD () :
             is_vector = torch.unsqueeze(torch.ones_like(valid), dim=-1)
             importance_sampling_correction = [is_vector] * 2
 
-            loss_nerd = vtrace.get_loss_nerd(
+            loss_nerd = self.get_loss_nerd(
                 [logit] * 2,
                 [pi] * 2,
                 v_trace_policy_target_list,
