@@ -415,21 +415,22 @@ if __name__ == '__main__' :
     import metric
 
     tree = Tree(
-        max_actions=2,
+        max_actions=3,
         max_transitions=1,
         transition_threshold=.45,
-        row_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
-        col_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
-        depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 1 * (random.random() < .5),
-        depth_bound=14,
-        desc='bigger but still testing'
+        # row_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
+        # col_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
+        depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 1 * (random.random() < .7),
+        depth_bound=4,
+        desc='more actions so less "pass" states'
     )
     tree._generate()
+    tree.save()
     print(tree.index.shape)
-    tree._assert_index_is_tree()
-    a, b = metric.max_min(tree, tree.nash)
-    print(a, b)
-    print(a - b)
+    # tree._assert_index_is_tree()
+    # a, b = metric.max_min(tree, tree.nash)
+    # print(a, b)
+    # print(a - b)
     # tree.load()
 
     # for _ in range(tree.value.shape[0]):

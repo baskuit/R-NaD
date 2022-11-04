@@ -11,6 +11,8 @@ import net
 import vtrace
 import metric
 
+from typing import Any, List, Sequence, Union
+
 class RNaD () :
 
     def __init__ (self,
@@ -78,7 +80,7 @@ class RNaD () :
         self.m = 0
         self.n = 0
 
-        self.net_params = {'size':self.tree.max_actions,'channels':2**5,'depth':2,'device':torch.device('cuda')}
+        self.net_params = {'size':self.tree.max_actions,'channels':2**7,'depth':1,'device':torch.device('cuda')}
         self.net = None
         self.net_target = None
         self.net_reg = None
@@ -146,9 +148,7 @@ class RNaD () :
         return True, self.delta_m_1[idx]
 
             
-    def resume (self) :
-        print('resume start')
-        
+    def resume (self) :        
         may_resume, delta_m = self._get_delta_m()
 
         while may_resume:
@@ -166,28 +166,7 @@ class RNaD () :
 
                 episodes = game.Episodes(self.tree, self.batch_size)
                 episodes.generate(self.net_target)
-                vtrace.transform_rewards(
-                    episodes, 
-                    self.net_target, 
-                    self.net_reg,
-                    self.net_reg_,
-                    alpha=alpha,
-                    eta=self.eta)
-                vtrace.v_trace(
-                    episodes,
-                    self.net_target,
-                    self.net_reg,
-                    self.net_reg_,
-                    alpha=alpha,
-                    eta=self.eta,
-                )
-                vtrace.accumulate_gradients(
-                    episodes,
-                    self.net,
-                    batch_size=1000,
-                    clip_neurd=self.grad_clip,
-                    beta=self.beta,
-                )
+                self._learn(episodes, alpha)
                 # this accumulates gradients in net
 
                 self.optimizer.step()
@@ -197,7 +176,8 @@ class RNaD () :
                 params2 = self.net_target.state_dict()
                 for name1, param1 in params1.items():
                     params2[name1].data.copy_(
-                        self.gamma * param1.data + (1-self.gamma)*params2[name1].data)
+                        self.gamma * param1.data + (1-self.gamma)*params2[name1].data
+                    )
                 self.net_target.load_state_dict(params2)
             # outerloop resume
 
@@ -217,6 +197,152 @@ class RNaD () :
             # torch.index_select(self.tree.expected_value, dim=0, )
             
             may_resume, delta_m = self._get_delta_m()
+
+    def _learn(
+        self,
+        episodes: game.Episodes,
+        alpha:float,
+    ):
+
+            player_id = episodes.turns
+            action_oh = episodes.actions #TODO turn this idx into one hot TODO
+            policy = episodes.policy
+            obs = episodes.observations
+            rewards = torch.stack([episodes.rewards, -episodes.rewards], dim=0) #TODO check dims for payer stacking
+            print('rewards shape:', rewards.shape)
+            print('obs shape:', obs.shape)
+            valid = episodes.masks #TODO check that its policy mask and not state mask is terminal
+            T = valid.shape[0]
+
+
+            logit, pi, v, _ = self.net.forward(torch.flatten(obs, 0, 1))
+            log_pi = torch.log(pi) #TODO check this is not actualy minused some baseline
+            v_target_list, has_played_list, v_trace_policy_target_list = [], [], []
+
+            assert(v.shape == (episodes.t_eff, episodes.batch_size, 1))
+
+            with torch.no_grad():
+                _, _, v, _ = self.net_target.forward(obs)
+                logit_reg, _, _, _ = self.net_reg.forward(obs)
+                logit_reg_, _, _, _ = self.net_reg_.forward(obs)
+                log_pi_reg = logit_reg - torch.sum(torch.exp(logit_reg)).unsqueeze(dim=-1)
+                log_pi_reg_ = logit_reg_ - torch.sum(torch.exp(logit_reg_)).unsqueeze(dim=-1)
+
+
+                log_policy_reg = log_pi - (alpha * log_pi_reg + (1 - alpha) * log_pi_reg_)
+
+                for player in range(2):
+                    reward = rewards[player, :, :]
+                    v_target, has_played, policy_target_ = vtrace.v_trace(
+                        v_target,
+                        valid,
+                        player_id,
+                        policy,
+                        pi,
+                        log_policy_reg,
+                        vtrace._player_others(player_id, valid, player),
+                        action_oh,
+                        reward,
+                        player,
+                        lambda_=1.0,
+                        c=1.0,
+                        rho=torch.inf,
+                        eta=0.2,
+                    )
+                    v_target_list.append(v_target)
+                    has_played_list.append(has_played)
+                    v_trace_policy_target_list.append(policy_target_)
+
+            loss_v = self.get_loss_v([v] * 2, v_target_list, has_played_list)
+
+            is_vector = torch.unsqueeze(torch.ones_like(valid), dim=-1)
+            importance_sampling_correction = [is_vector] * 2
+
+            loss_nerd = vtrace.get_loss_nerd(
+                [logit] * 2,
+                [pi] * 2,
+                v_trace_policy_target_list,
+                valid,
+                player_id,
+                episodes.masks,
+                importance_sampling_correction,
+                clip=10_000,
+                threshold=2.0,
+            )
+
+            loss = loss_v + loss_nerd
+            loss.backward()
+
+            nn.utils.clip_grad_norm_(self.net.parameters(), 10_000)
+
+            avg_traj_len = valid.sum(0).mean(-1)
+
+            to_log = {
+                "loss_v": loss_v.item(),
+                "loss_nerd": loss_nerd.item(),
+                "loss_total": loss.item(),
+                "traj_len": avg_traj_len.item(),
+            }
+
+            # tqdm_repr = {k: round(v, 4) for k, v in to_log.items()}
+            # logging.info(f"Training step: {n} {repr(tqdm_repr)}")
+
+    def get_loss_v(
+        self,
+        v_list: Sequence[torch.Tensor],
+        v_target_list: Sequence[torch.Tensor],
+        mask_list: Sequence[torch.Tensor],
+    ) -> torch.Tensor:
+        """Define the loss function for the critic."""
+        loss_v_list = []
+        for (v_n, v_target, mask) in zip(v_list, v_target_list, mask_list):
+            assert v_n.shape[0] == v_target.shape[0]
+
+            loss_v = torch.unsqueeze(mask, dim=-1) * (v_n - v_target.detach()) ** 2
+            normalization = torch.sum(mask)
+            loss_v = torch.sum(loss_v) / (normalization + (normalization == 0.0))
+
+            loss_v_list.append(loss_v)
+
+        return sum(loss_v_list)
+
+
+    def get_loss_nerd(
+        self,
+        logit_list: Sequence[torch.Tensor],
+        policy_list: Sequence[torch.Tensor],
+        q_vr_list: Sequence[torch.Tensor],
+        valid: torch.Tensor,
+        player_ids: Sequence[torch.Tensor],
+        legal_actions: torch.Tensor,
+        importance_sampling_correction: Sequence[torch.Tensor],
+        clip: float = 100,
+        threshold: float = 2,
+    ) -> torch.Tensor:
+        """Define the nerd loss."""
+        assert isinstance(importance_sampling_correction, list)
+        loss_pi_list = []
+        for k, (logit_pi, pi, q_vr, is_c) in enumerate(
+            zip(logit_list, policy_list, q_vr_list, importance_sampling_correction)
+        ):
+            assert logit_pi.shape[0] == q_vr.shape[0]
+            # loss policy
+            adv_pi = q_vr - torch.sum(pi * q_vr, dim=-1, keepdim=True)
+            adv_pi = is_c * adv_pi  # importance sampling correction
+            adv_pi = torch.clip(adv_pi, min=-clip, max=clip)
+            adv_pi = adv_pi.detach()
+
+            logits = logit_pi - torch.mean(logit_pi * legal_actions, dim=-1, keepdim=True)
+
+            threshold_center = torch.zeros_like(logits)
+
+            nerd_loss = torch.sum(
+                legal_actions * vtrace.apply_force_with_threshold(logits, adv_pi, threshold, threshold_center), axis=-1
+            )
+            nerd_loss = -vtrace.renormalize(nerd_loss, valid * (player_ids == k))
+            loss_pi_list.append(nerd_loss)
+        return sum(loss_pi_list)
+
 
     def run (self):
 
@@ -239,11 +365,12 @@ class RNaD () :
 if __name__ == '__main__' :
     # make new tree
     test_run = RNaD(
-        tree_id='1667264620', 
+        tree_id='recent', #3x3 
         directory_name=str(int(time.time())),
         eta=.2,
         delta_m_0 = (100, 165, 200, 250),
-        delta_m_1 = (1000, 5000, 2000, 0), 
-        batch_size=32,
-        lr=.00005)
+        delta_m_1 = (1000, 1000, 2000, 0), 
+        batch_size=700,
+        lr=.00005,
+        beta=10,)
     test_run.run()

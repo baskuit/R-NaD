@@ -65,7 +65,7 @@ class ConvNet (nn.Module):
         logits = self.policy(x)
         policy = F.softmax(logits, dim=1)
         policy *= filter_row
-        F.normalize(policy, dim=1)
+        policy = F.normalize(policy, dim=1, p=1)
         value = self.value(x)
         actions = torch.squeeze(torch.multinomial(policy, num_samples=1))
         return logits, policy, value, actions
@@ -84,7 +84,7 @@ class ConvNet (nn.Module):
         logits = self.policy(x)
         policy = F.softmax(logits, dim=1)
         policy *= filter_row
-        F.normalize(policy, dim=1)
+        F.normalize(policy, dim=1, p=1)
         return policy
 
 
