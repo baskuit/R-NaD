@@ -74,6 +74,7 @@ class Tree () :
         self.payoff = torch.zeros((1, 1), device=device, dtype=torch.float)
         self.nash = torch.zeros(nash_shape, device=device, dtype=torch.float)
         self.desc=desc
+        self.size=0
         self.saved_keys = [key for key in self.__dict__.keys()]
         self.row_actions_lambda=row_actions_lambda
         self.col_actions_lambda=col_actions_lambda
@@ -238,6 +239,7 @@ class Tree () :
 
         if self.is_root:
             self.index += (self.index != 0)
+            self.size = self.value.shape[0]
 
     def save (self):
         if not os.path.exists(self.directory):
@@ -423,13 +425,23 @@ if __name__ == '__main__' :
         # transition_threshold=.45,
         # row_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
         # col_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
+        row_actions_lambda=lambda tree:3,
+        col_actions_lambda=lambda tree:3,
+        row_actions=2,
+        col_actions=2,
         depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 1 * (random.random() < .7),
-        depth_bound=6,
-        desc='small'
+        depth_bound=7,
+        desc='3x3 but 2x2 at root'
     )
     tree._generate()
     tree.save()
-    print(tree.index.shape)
+    print(tree.size)
+    # tree.load('2x2rootmixed')
+
+    
+
+
+    
     # tree._assert_index_is_tree()
     # a, b = metric.max_min(tree, tree.nash)
     # print(a, b)
