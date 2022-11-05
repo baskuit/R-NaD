@@ -86,7 +86,7 @@ class ConvNet (nn.Module):
         logits = self.policy(x)
         policy = F.softmax(logits, dim=1)
         policy *= filter_row
-        F.normalize(policy, dim=1, p=1)
+        policy = F.normalize(policy, dim=1, p=1)
         return policy
 
     def forward_batch (self, episodes : game.Episodes) :
