@@ -11,6 +11,8 @@ import net
 import vtrace
 import metric
 
+import matplotlib.pyplot as pyplot
+
 from typing import Any, List, Sequence, Union
 
 class RNaD () :
@@ -28,15 +30,14 @@ class RNaD () :
         b1_adam=0,
         b2_adam=.999,
         epsilon_adam=10**-8,
-        gamma=.001, #averaging for target net
+        gamma=.001,
         roh_bar=1,
         c_bar=1,
         batch_size=3*2**8,
         epsilon_threshold=.03,
         n_discrete=32,
-        # checkpoint. dont pass m,n since we either start from scratch or used saved
+        device=torch.device('cuda'),
         directory_name=None,
-        checkpoint_mod=10**3,
 
     ):
         self.tree_id = tree_id,
@@ -54,7 +55,7 @@ class RNaD () :
         self.gamma = gamma
         self.roh_bar = roh_bar
         self.c_bar = c_bar
-        self.batch_size = batch_size #one Episodes per step TODO
+        self.batch_size = batch_size
         self.epsilon_threshold = epsilon_threshold
         self.n_discrete = n_discrete
 
@@ -62,143 +63,33 @@ class RNaD () :
         if not os.path.exists(saved_runs_dir):
             os.mkdir(saved_runs_dir)
         if directory_name is None:
-            # poverty name
             directory_name = str(int(time.perf_counter()))
+        self.directory_name = directory_name
         self.directory = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', directory_name)       
-        # Create folder on intialiazation of RNaD
         if not os.path.exists(self.directory):
             os.mkdir(self.directory)
-        self.checkpoint_mod = checkpoint_mod
 
+        #### #### #### ####
         self.saved_keys = [key for key in self.__dict__.keys()]
+        #### #### #### ####
+
+        self.device = device
 
         self.alpha_lambda = lambda n, delta_m: 1 if n > delta_m / 2 else n * 2 / delta_m
 
         self.tree = game.Tree()
         self.tree.load(tree_id)
         logging.debug("Tree {} loaded, index tensor has shape {}".format(tree_id, self.tree.index.shape))
-        self.tree.to(torch.device('cuda:0'))
+        self.tree.to(self.device)
 
         self.m = 0
         self.n = 0
 
-        self.net_params = {'size':self.tree.max_actions,'channels':2**7,'depth':2,'device':torch.device('cuda')}
-        self.net:net.ConvNet = None
-        self.net_target:net.ConvNet = None
-        self.net_reg:net.ConvNet = None
-        self.net_reg_:net.ConvNet = None
-
-    def _new_net (self) -> nn.Module:
-        # on cuda by default since large trees will have to be stored on cpu so may as well used shared memory with workers if it comes to that
-        return net.ConvNet(**self.net_params)
-         
-    def initialize (self):
-
-        # look through dir to find most recent saved networks, otherwise initialize:
-
-        folder_names_as_int = [int(os.path.relpath(f.path, self.directory)) for f in os.scandir(self.directory) if f.is_dir()]
-        
-        if not folder_names_as_int:
-            
-            params_dict = {key : self.__dict__[key] for key in self.saved_keys}
-            torch.save(params_dict,  os.path.join(self.directory, 'params'))
-
-            os.mkdir(os.path.join(self.directory, '0'))
-            self.m = 0
-            self.n = 0
-            self.net = self._new_net()
-            self.net_target = self._new_net()
-            self.net_target.load_state_dict(self.net.state_dict())
-            self.net_reg = self._new_net()
-            self.net_reg.load_state_dict(self.net.state_dict())
-            self.net_reg_ = self._new_net()
-            self.net_reg_.load_state_dict(self.net.state_dict())
-            self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
-            self.save()
-
-        else:
-
-            params_dict = torch.load(os.path.join(self.directory, 'params'))
-            assert(self.tree_id == params_dict['tree_id'])
-            for key, value in params_dict.items():
-                self.__dict__[key] = value
-            self.m = max(folder_names_as_int)
-            logging.debug('initializing net, found largest m: {}'.format(self.m))
-            last_outer_step_dir = os.path.join(self.directory, str(self.m))
-            checkpoints = [int(os.path.relpath(f.path, last_outer_step_dir)) for f in os.scandir(last_outer_step_dir) if not f.is_dir()]
-            self.n = max(checkpoints)
-
-            saved_dict = torch.load(os.path.join(self.directory, str(self.m), str(self.n)))
-            self.net_params = saved_dict['net_params']
-            self.net = self._new_net()
-            self.net.load_state_dict(saved_dict['net'])
-            self.net_target = self._new_net()
-            self.net_target.load_state_dict(saved_dict['net_target'])
-            self.net_reg = self._new_net()
-            self.net_reg.load_state_dict(saved_dict['net_reg'])
-            self.net_reg_ = self._new_net()
-            self.net_reg_.load_state_dict(saved_dict['net_reg_'])
-            self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
-            self.optimizer.load_state_dict(saved_dict['optimizer'])
-
-    def _get_delta_m (self) -> tuple[bool, int]:
-        bounding_indices = [_ for _, bound in enumerate(self.delta_m_0) if bound > self.m]
-        if not bounding_indices:
-            return False, 0
-
-        idx = min(bounding_indices)
-        return True, self.delta_m_1[idx]
-
-            
-    def resume (self,
-    expl_mod=1) :        
-        may_resume, delta_m = self._get_delta_m()
-        while may_resume:
-            print(self.m, delta_m)
-
-            
-            while self.n < delta_m:
-                alpha = self.alpha_lambda(self.n, delta_m)
-
-                if self.n % self.checkpoint_mod == 0:
-                    self.save()
-
-                self.n += 1
-
-                episodes = game.Episodes(self.tree, self.batch_size)
-                episodes.generate(self.net_target)
-                self._learn(episodes, alpha)
-                # this accumulates gradients in net
-
-                self.optimizer.step()
-                self.optimizer.zero_grad()
-
-                params1 = self.net.state_dict()
-                params2 = self.net_target.state_dict()
-                for name1, param1 in params1.items():
-                    params2[name1].data.copy_(
-                        self.gamma * param1.data + (1-self.gamma)*params2[name1].data
-                    )
-                self.net_target.load_state_dict(params2)
-            # outerloop resume
-
-            if self.m % expl_mod == 0:
-                # NashConv
-                expl = metric.nash_conv(self.tree, self.net_reg, inference_batch_size=1000)
-                print('NashConv:', expl)
-                print('root strats', self.tree.nash[1])
-                print('payoff', self.tree.payoff[1])
-
-            self.n = 0
-            self.m += 1
-            self.net_reg_ = self.net_reg
-            self.net_reg = self.net_target
-
-
-            # value_slice = self.tree.expected_value[self.tree.index[self.tree.index != 0]]
-            # torch.index_select(self.tree.expected_value, dim=0, )
-            
-            may_resume, delta_m = self._get_delta_m()
+        self.net_params = {'size':self.tree.max_actions,'channels':2**7,'depth':2,'device':self.device}
+        self.net: net.ConvNet = None
+        self.net_target: net.ConvNet = None
+        self.net_reg: net.ConvNet = None
+        self.net_reg_: net.ConvNet = None
 
     def _learn(
         self,
@@ -246,12 +137,12 @@ class RNaD () :
                     has_played_list.append(has_played)
                     v_trace_policy_target_list.append(policy_target_)
 
-            loss_v = self.get_loss_v([v] * 2, v_target_list, has_played_list)
+            loss_v = vtrace.get_loss_v([v] * 2, v_target_list, has_played_list)
 
             is_vector = torch.unsqueeze(torch.ones_like(valid), dim=-1)
             importance_sampling_correction = [is_vector] * 2
 
-            loss_nerd = self.get_loss_nerd(
+            loss_nerd = vtrace.get_loss_nerd(
                 [logit] * 2,
                 [pi] * 2,
                 v_trace_policy_target_list,
@@ -280,70 +171,24 @@ class RNaD () :
             # tqdm_repr = {k: round(v, 4) for k, v in to_log.items()}
             # logging.info(f"Training step: {n} {repr(tqdm_repr)}")
 
-    def get_loss_v(
-        self,
-        v_list: Sequence[torch.Tensor],
-        v_target_list: Sequence[torch.Tensor],
-        mask_list: Sequence[torch.Tensor],
-    ) -> torch.Tensor:
-        """Define the loss function for the critic."""
-        loss_v_list = []
-        for (v_n, v_target, mask) in zip(v_list, v_target_list, mask_list):
-            assert v_n.shape[0] == v_target.shape[0]
+    def _new_net (self) -> nn.Module:
+        return net.ConvNet(**self.net_params)
 
-            loss_v = torch.unsqueeze(mask, dim=-1) * (v_n - v_target.detach()) ** 2
-            normalization = torch.sum(mask)
-            loss_v = torch.sum(loss_v) / (normalization + (normalization == 0.0))
+    def _load_checkpoint (self, m, n):
+        saved_dict = torch.load(os.path.join(self.directory, str(m), str(n)))
+        self.net_params = saved_dict['net_params']
+        self.net = self._new_net()
+        self.net.load_state_dict(saved_dict['net'])
+        self.net_target = self._new_net()
+        self.net_target.load_state_dict(saved_dict['net_target'])
+        self.net_reg = self._new_net()
+        self.net_reg.load_state_dict(saved_dict['net_reg'])
+        self.net_reg_ = self._new_net()
+        self.net_reg_.load_state_dict(saved_dict['net_reg_'])
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
+        self.optimizer.load_state_dict(saved_dict['optimizer'])
 
-            loss_v_list.append(loss_v)
-
-        return sum(loss_v_list)
-
-
-    def get_loss_nerd(
-        self,
-        logit_list: Sequence[torch.Tensor],
-        policy_list: Sequence[torch.Tensor],
-        q_vr_list: Sequence[torch.Tensor],
-        valid: torch.Tensor,
-        player_ids: Sequence[torch.Tensor],
-        legal_actions: torch.Tensor,
-        importance_sampling_correction: Sequence[torch.Tensor],
-        clip: float = 100,
-        threshold: float = 2,
-    ) -> torch.Tensor:
-        """Define the nerd loss."""
-        assert isinstance(importance_sampling_correction, list)
-        loss_pi_list = []
-        for k, (logit_pi, pi, q_vr, is_c) in enumerate(
-            zip(logit_list, policy_list, q_vr_list, importance_sampling_correction)
-        ):
-            assert logit_pi.shape[0] == q_vr.shape[0]
-            # loss policy
-            adv_pi = q_vr - torch.sum(pi * q_vr, dim=-1, keepdim=True)
-            adv_pi = is_c * adv_pi  # importance sampling correction
-            adv_pi = torch.clip(adv_pi, min=-clip, max=clip)
-            adv_pi = adv_pi.detach()
-
-            logits = logit_pi - torch.mean(logit_pi * legal_actions, dim=-1, keepdim=True)
-
-            threshold_center = torch.zeros_like(logits)
-
-            nerd_loss = torch.sum(
-                legal_actions * vtrace.apply_force_with_threshold(logits, adv_pi, threshold, threshold_center), axis=-1
-            )
-            nerd_loss = -vtrace.renormalize(nerd_loss, valid * (player_ids == k))
-            loss_pi_list.append(nerd_loss)
-        return sum(loss_pi_list)
-
-
-    def run (self,
-    expl_mod=1):
-
-        self.initialize()
-        self.resume(expl_mod=expl_mod)
-
-    def save (self):
+    def _save_checkpoint (self, nash_conv_data=None):
         saved_dict = {
             'net_params':self.net_params,
             'net':self.net.state_dict(),
@@ -351,10 +196,121 @@ class RNaD () :
             'net_reg':self.net.state_dict(),
             'net_reg_':self.net.state_dict(),
             'optimizer':self.optimizer.state_dict(),
+            'nash_conv_data':nash_conv_data,
         }
         if not os.path.exists(os.path.join(self.directory, str(self.m))):
             os.mkdir(os.path.join(self.directory, str(self.m)))
         torch.save(saved_dict, os.path.join(self.directory, str(self.m), str(self.n)))
+         
+    def initialize (self):
+        # look through dir to find most recent saved networks, otherwise initialize:
+
+        folder_names_as_int = [int(os.path.relpath(f.path, self.directory)) for f in os.scandir(self.directory) if f.is_dir()]
+        
+        if not folder_names_as_int:
+            
+            params_dict = {key : self.__dict__[key] for key in self.saved_keys}
+            torch.save(params_dict,  os.path.join(self.directory, 'params'))
+
+            os.mkdir(os.path.join(self.directory, '0'))
+            self.m = 0
+            self.n = 0
+            self.net = self._new_net()
+            self.net_target = self._new_net()
+            self.net_target.load_state_dict(self.net.state_dict())
+            self.net_reg = self._new_net()
+            self.net_reg.load_state_dict(self.net.state_dict())
+            self.net_reg_ = self._new_net()
+            self.net_reg_.load_state_dict(self.net.state_dict())
+            self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
+            self._save_checkpoint()
+
+        else:
+
+            params_dict = torch.load(os.path.join(self.directory, 'params'))
+            assert(self.tree_id == params_dict['tree_id'])
+            for key, value in params_dict.items():
+                self.__dict__[key] = value
+            self.m = max(folder_names_as_int)
+            logging.debug('initializing net, found largest m: {}'.format(self.m))
+            last_outer_step_dir = os.path.join(self.directory, str(self.m))
+            checkpoints = [int(os.path.relpath(f.path, last_outer_step_dir)) for f in os.scandir(last_outer_step_dir) if not f.is_dir()]
+            self.n = max(checkpoints)
+
+            self._load_checkpoint(self.m, self.n)
+
+    def _get_delta_m (self) -> tuple[bool, int]:
+        bounding_indices = [_ for _, bound in enumerate(self.delta_m_0) if bound > self.m]
+        if not bounding_indices:
+            return False, 0
+
+        idx = min(bounding_indices)
+        return True, self.delta_m_1[idx]
+
+            
+    def resume (
+        self,
+        checkpoint_mod=1000,
+        expl_mod=1,
+    ) :
+
+        may_resume, delta_m = self._get_delta_m()
+
+        while may_resume:
+
+            logging.info('m:{}, n:{}'.format(self.m, self.n))
+            while self.n < delta_m:
+                alpha = self.alpha_lambda(self.n, delta_m)
+
+                if self.n % checkpoint_mod == 0:
+                    nash_conv_data = None
+                    if self.m % expl_mod == 0 and self.n == 0:
+                        nash_conv_data = metric.nash_conv(self.tree, self.net)
+                        mean_nash_conv = metric.mean_nash_conv_by_depth(nash_conv_data)
+                        logging.info('mean nash_conv by depth:')
+                        for depth, nash_conv in mean_nash_conv.items():
+                            logging.info('depth:{}, nash_conv:{}'.format(depth, nash_conv))
+                    self._save_checkpoint(nash_conv_data=nash_conv_data)
+
+                episodes = game.Episodes(self.tree, self.batch_size)
+                episodes.generate(self.net_target)
+                self._learn(episodes, alpha)
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+                params1 = self.net.state_dict()
+                params2 = self.net_target.state_dict()
+                for name1, param1 in params1.items():
+                    params2[name1].data.copy_(
+                        self.gamma * param1.data + (1-self.gamma)*params2[name1].data
+                    )
+                self.net_target.load_state_dict(params2)
+
+                self.n += 1
+
+            self.n = 0
+            self.m += 1
+            self.net_reg_ = self.net_reg
+            self.net_reg = self.net_target
+            
+            may_resume, delta_m = self._get_delta_m()
+
+    def run (
+        self,
+        checkpoint_mod=1000,
+        expl_mod=1,
+    ):
+        self.initialize()
+        self.resume(checkpoint_mod=checkpoint_mod, expl_mod=expl_mod)
+        # try:
+        #     self.resume(expls, expl_mod=expl_mod)
+        # except KeyboardInterrupt:
+        #     fig, ax = pyplot.subplots()
+        #     ax.plot([_[0] for _ in expls], [_[1] for _ in expls])
+        #     pyplot.ylim([0, 2])
+        #     fig.savefig("test.png")
+        #     pyplot.show()
+
 
 if __name__ == '__main__' :
     """"
@@ -362,14 +318,18 @@ if __name__ == '__main__' :
     In my earlier tests, I had success with small (~16) batches sizes
     and higher (.01) learning rates
     """
-    test_run = RNaD(
+
+    logging.basicConfig(level=logging.DEBUG)
+
+    trial = RNaD(
+        device=torch.device('cpu'),
         eta=.2,
         # schedule for number of steps before updating regularizer policies
         # e.g. if m < 100 then delta_m = 10_000 etc
-        delta_m_0 = (100, 165, 200,),
-        delta_m_1 = (10_000, 100_000, 35_000,),
+        delta_m_0 = (400, 1000, 2000,),
+        delta_m_1 = (100, 200, 1000,),
         lr=5*10**-5,
-        batch_size=3*2**8,
+        batch_size=2**4,
         beta=2, # logit clip
         neurd_clip=10**4, # Q value clip
         grad_clip=10**4, # gradient clip
@@ -381,8 +341,13 @@ if __name__ == '__main__' :
         gamma=.001, #averaging for target net
         roh_bar=1,
         c_bar=1,
-       
+        # directory_name='expl save test',
+        # tree_id='2x2rootmixed',
+        tree_id='recent',
         )
 
-    test_run.run(expl_mod=1) 
+    trial.run(
+        checkpoint_mod=10**3,
+        expl_mod=1
+    ) 
     # expl mod is after how many steps to calculate NashConv. Set to 1 for large delta_m
