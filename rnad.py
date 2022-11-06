@@ -228,7 +228,7 @@ class RNaD () :
         else:
 
             params_dict = torch.load(os.path.join(self.directory, 'params'))
-            assert(self.tree_id == params_dict['tree_id'])
+            # assert(self.tree_id == params_dict['tree_id'])
             for key, value in params_dict.items():
                 self.__dict__[key] = value
             self.m = max(folder_names_as_int)
@@ -265,11 +265,31 @@ class RNaD () :
                 if self.n % checkpoint_mod == 0:
                     nash_conv_data = None
                     if self.m % expl_mod == 0 and self.n == 0:
+                        logging.info('net')
                         nash_conv_data = metric.nash_conv(self.tree, self.net)
                         mean_nash_conv = metric.mean_nash_conv_by_depth(nash_conv_data)
                         logging.info('mean nash_conv by depth:')
                         for depth, nash_conv in mean_nash_conv.items():
                             logging.info('depth:{}, nash_conv:{}'.format(depth, nash_conv))
+                        logging.info('net target')
+                        nash_conv_data_target = metric.nash_conv(self.tree, self.net_target)
+                        mean_nash_conv_target = metric.mean_nash_conv_by_depth(nash_conv_data_target)
+                        logging.info('mean nash_conv by depth:')
+                        for depth, nash_conv in mean_nash_conv_target.items():
+                            logging.info('depth:{}, nash_conv:{}'.format(depth, nash_conv))
+
+
+                        test_obs_1 = self.tree.expected_value
+                        test_obs_2 = self.tree.legal
+                        test_obs = torch.cat([test_obs_1, test_obs_2], dim=1)
+                        logit, policy, value, _ = self.net.forward(test_obs)
+                        for _ in range(1, 2):
+                            # print(logit[_])
+                            
+                            print(nash_conv_data.max_1[_], nash_conv_data.min_2[_])
+                            print(nash_conv_data.policy[_])
+                            print(self.tree.nash[_])
+                        print('\n')
                     self._save_checkpoint(nash_conv_data=nash_conv_data)
 
                 episodes = game.Episodes(self.tree, self.batch_size)
@@ -323,13 +343,13 @@ if __name__ == '__main__' :
 
     trial = RNaD(
         device=torch.device('cuda'),
-        eta=1,
+        eta=5,
         # schedule for number of steps before updating regularizer policies
         # e.g. if m < 100 then delta_m = 10_000 etc
         delta_m_0 = (20, 50, 100, 300),
-        delta_m_1 = (200, 200, 1000, 2000),
-        lr=1*10**-5,
-        batch_size=2**4,
+        delta_m_1 = (500, 1000, 1000, 2000),
+        lr=5*10**-5,
+        batch_size=2**6,
         beta=2, # logit clip
         neurd_clip=10**3, # Q value clip
         grad_clip=10**4, # gradient clip
@@ -348,6 +368,6 @@ if __name__ == '__main__' :
 
     trial.run(
         checkpoint_mod=10**3,
-        expl_mod=1
+        expl_mod=1,
     ) 
     # expl mod is after how many steps to calculate NashConv. Set to 1 for large delta_m
