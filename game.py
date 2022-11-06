@@ -101,7 +101,7 @@ class Tree () :
         """
         Generates a random transition probabilty tensor. (It does not respect legality of moves, it is masked later)
         """
-        probs = torch.from_numpy(np.random.dirichlet((1/n_trans,)*n_trans, (1,rows,cols))).to(self.device)
+        probs = torch.from_numpy(np.random.dirichlet((1/n_trans,)*n_trans, (1,rows,cols))).to(self.device).to(torch.float)
         probs = probs - torch.where(probs < transition_threshold, probs, 0)
         probs = torch.nn.functional.normalize(probs, p=1, dim=3)
         probs = probs.movedim(3, 1)

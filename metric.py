@@ -16,9 +16,9 @@ By default we store game-wide tensors on cpu
 class NashConvData ():
 
     def __init__ (self, tree: game.Tree):
-        self.policy = torch.zeros((tree.size, 2 * tree.max_actions), device=tree.device, dtype=torch.double)
-        self.max_1 =  torch.zeros((tree.size,), device=tree.device, dtype=torch.double)
-        self.min_2 =  torch.zeros((tree.size,), device=tree.device, dtype=torch.double)
+        self.policy = torch.zeros((tree.size, 2 * tree.max_actions), device=tree.device, dtype=torch.float)
+        self.max_1 =  torch.zeros((tree.size,), device=tree.device, dtype=torch.float)
+        self.min_2 =  torch.zeros((tree.size,), device=tree.device, dtype=torch.float)
         self.depth =  torch.zeros((tree.size,), device=tree.device, dtype=torch.int)
 
 def nash_conv (tree : game.Tree, net : net.ConvNet, inference_batch_size=10**5) :
@@ -34,17 +34,17 @@ def nash_conv (tree : game.Tree, net : net.ConvNet, inference_batch_size=10**5) 
 
         with torch.no_grad():
             inference_slice = torch.cat([value_slice, legal_slice], dim=1)
-            data.policy[slice_range, :tree.max_actions] = net.forward_policy(inference_slice).to(torch.device('cpu'))
+            data.policy[slice_range, :tree.max_actions] = net.forward_policy(inference_slice)
             inference_slice = torch.cat([-value_slice, legal_slice], dim=1).swapaxes(2, 3)
-            data.policy[slice_range, tree.max_actions:] = net.forward_policy(inference_slice).to(torch.device('cpu'))
+            data.policy[slice_range, tree.max_actions:] = net.forward_policy(inference_slice)
     max_min(tree, data)
     net.train()
     return data
 
 def max_min (tree : game.Tree, data : NashConvData, root_index=1, depth=0):
 
-    matrix_1 = torch.zeros((tree.max_transitions * tree.max_actions**2,))
-    matrix_2 = torch.zeros((tree.max_transitions * tree.max_actions**2,))
+    matrix_1 = torch.zeros((tree.max_transitions * tree.max_actions**2,), device=tree.device, dtype=torch.float)
+    matrix_2 = torch.zeros((tree.max_transitions * tree.max_actions**2,), device=tree.device, dtype=torch.float)
 
     value_root = torch.flatten(tree.value[root_index:root_index+1]) #(1, n_trans, max_actions, max_actions)
     index_root = torch.flatten(tree.index[root_index:root_index+1]) #(1, n_trans, max_actions, max_actions)
@@ -64,9 +64,8 @@ def max_min (tree : game.Tree, data : NashConvData, root_index=1, depth=0):
             max_1_ = data.max_1[root_index_]
             min_2_ = data.min_2[root_index_]
             depths.append(data.depth[root_index_])
-
-        matrix_1[idx_flat] = (max_1_ * transition_prob).to(torch.float)
-        matrix_2[idx_flat] = (min_2_ * transition_prob).to(torch.float)
+        matrix_1[idx_flat] = (max_1_ * transition_prob)
+        matrix_2[idx_flat] = (min_2_ * transition_prob)
 
     matrix_1 = matrix_1.view(tree.max_transitions, tree.max_actions, tree.max_actions)
     matrix_2 = matrix_2.view(tree.max_transitions, tree.max_actions, tree.max_actions)
@@ -102,27 +101,23 @@ if __name__ == '__main__' :
     import game
     import net
     tree = game.Tree(
-        depth_bound=2,
+        depth_bound=4,
         max_actions=3,
     )
     # tree.load('1667264620')
     tree._generate()
     tree._assert_index_is_tree()
     net_ = net.ConvNet(tree.max_actions, 1, 1)
-    # expl = nash_conv(tree, net, 1000)
-    # print(expl)
-    # pi_1, pi_2 = tree.legal[:, 0, :, 0], tree.legal[:, 0, 0, :]
-    # pi_1 = torch.nn.functional.normalize(pi_1, dim=1, p=1)
-    # pi_2 = torch.nn.functional.normalize(pi_2, dim=1, p=1)
 
     # pi = tree.nash
-    # pi_1, pi_2 = pi[:, :3], pi[:, 3:]
-    # pi = torch.cat([pi_1, pi_2], dim=1)
+    # data = NashConvData(tree)
+    # data.policy = pi
+    # print(tree.chance.dtype)
+    # max_min(tree, data)
+    # print(data.max_1[1] - data.min_2[1])
+
+
     data = nash_conv(tree, net_)
     means = mean_nash_conv_by_depth(data)
     for _, __ in means.items():
         print(_, __)
-    # for _ in range(tree.size):
-    #     print(_)
-    #     print(tree.expected_value[_])
-    #     print(tree.nash[_])
