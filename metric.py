@@ -24,9 +24,8 @@ class NashConvData ():
 def nash_conv (tree : game.Tree, net : net.ConvNet, inference_batch_size=10**5) :
 
     data = NashConvData(tree)
-    data.policy = tree.nash
 
-    net.eval()
+    # net.eval()
     for _ in range(tree.size // inference_batch_size + 1):
         slice_range = torch.arange(_ * inference_batch_size, min((_+1) * inference_batch_size, tree.size), device=tree.device)
         value_slice = tree.expected_value[slice_range]
@@ -38,7 +37,7 @@ def nash_conv (tree : game.Tree, net : net.ConvNet, inference_batch_size=10**5) 
             inference_slice = torch.cat([-value_slice, legal_slice], dim=1).swapaxes(2, 3)
             data.policy[slice_range, tree.max_actions:] = net.forward_policy(inference_slice)
     max_min(tree, data)
-    net.train()
+    # net.train()
     return data
 
 def max_min (tree : game.Tree, data : NashConvData, root_index=1, depth=0):

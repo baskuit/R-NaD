@@ -429,13 +429,15 @@ if __name__ == '__main__' :
         col_actions_lambda=lambda tree:3,
         row_actions=2,
         col_actions=2,
-        depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 1 * (random.random() < .7),
-        depth_bound=7,
+        # depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 1 * (random.random() < .7),
+        depth_bound=3,
         desc='3x3 but 2x2 at root'
     )
-    tree._generate()
-    tree.save()
+    # tree._generate()
+    # tree.save()
+    tree.load()
     print(tree.size)
+    print(tree.expected_value[1])
     # tree.load('2x2rootmixed')
 
     

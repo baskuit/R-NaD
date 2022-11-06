@@ -36,7 +36,6 @@ class MLP (nn.Module):
         Does not use value head but does perform legal actions masking
         """
         filter_row = input_batch[:, 1, :, 0].to(torch.bool)
-        print(input_batch.shape)
         input_batch = input_batch.reshape(-1, 2*self.size**2)
         logits = self.policy_fc1(torch.relu(self.policy_fc0(input_batch)))
         exp_logits = torch.where(filter_row, torch.exp(logits), 0)
