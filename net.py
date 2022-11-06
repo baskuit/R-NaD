@@ -11,6 +11,60 @@ import random
 # import vtrace
 # import metric
 
+class MLP (nn.Module):
+    def __init__(self, size, width, device=torch.device('cpu:0'), dtype=torch.float):
+        super().__init__()
+        self.value_fc0 = nn.Linear(2*size**2, width, device=device, dtype=dtype)
+        self.value_fc1 = nn.Linear(width, 1, device=device, dtype=dtype)
+        self.policy_fc0 = nn.Linear(2*size**2, width, device=device, dtype=dtype)
+        self.policy_fc1 = nn.Linear(width, size, device=device, dtype=dtype)
+        self.size = size
+        self.width = width
+
+    def forward (self, input_batch):
+        filter_row = input_batch[:, 1, :, 0].to(torch.bool)
+        input_batch = input_batch.view(-1, 2*self.size**2)
+        value = self.value_fc1(torch.relu(self.value_fc0(input_batch)))
+        logits = self.policy_fc1(torch.relu(self.policy_fc0(input_batch)))
+        exp_logits = torch.where(filter_row, torch.exp(logits), 0)
+        policy = torch.nn.functional.normalize(exp_logits, dim=-1, p=1)
+        actions = torch.squeeze(torch.multinomial(policy, num_samples=1))
+        return logits, policy, value, actions
+
+    def forward_policy (self, input_batch:torch.Tensor) -> torch.Tensor:
+        """
+        Does not use value head but does perform legal actions masking
+        """
+        filter_row = input_batch[:, 1, :, 0].to(torch.bool)
+        print(input_batch.shape)
+        input_batch = input_batch.reshape(-1, 2*self.size**2)
+        logits = self.policy_fc1(torch.relu(self.policy_fc0(input_batch)))
+        exp_logits = torch.where(filter_row, torch.exp(logits), 0)
+        policy = torch.nn.functional.normalize(exp_logits, dim=-1, p=1)
+        return policy
+
+    def forward_batch (self, episodes : game.Episodes) :
+
+        logit_list, log_policy_list, policy_list, value_list = [], [], [], [] 
+        for t in range(0, episodes.t_eff + 1):
+            observations = episodes.observations[t]
+            filter_row = observations[:, 1, :, 0].to(torch.bool)
+            observations = observations.view(-1, 2*self.size**2)
+            value = self.value_fc1(torch.relu(self.value_fc0(observations)))
+            observations = observations.view(-1, 2*self.size**2)
+            logits = self.policy_fc1(torch.relu(self.policy_fc0(observations)))
+            exp_logits = torch.where(filter_row, torch.exp(logits), 0)
+            policy = torch.nn.functional.normalize(exp_logits, dim=-1, p=1)
+            log_sum = torch.log(torch.sum(exp_logits, dim=-1, keepdim=True))
+            log_policy = torch.where(filter_row, logits - log_sum, 0)
+            logit_list.append(logits)
+            log_policy_list.append(log_policy)
+            policy_list.append(policy)
+            value_list.append(value)
+        return [torch.stack(_, dim=0) for _ in (logit_list, log_policy_list, policy_list, value_list)]
+
+    
+
 class CrossConv (nn.Module) :
  
     def __init__ (self, size, in_channels, out_channels, device=torch.device('cpu:0'), dtype=torch.float) :

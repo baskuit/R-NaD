@@ -30,7 +30,7 @@ class RNaD () :
         b1_adam=0,
         b2_adam=.999,
         epsilon_adam=10**-8,
-        gamma=.001,
+        gamma_averaging=.001,
         roh_bar=1,
         c_bar=1,
         batch_size=3*2**8,
@@ -51,8 +51,8 @@ class RNaD () :
         self.grad_clip = grad_clip
         self.b1_adam = b1_adam
         self.b2_adam = b2_adam
-        self.epsilon_adam = epsilon_adam
-        self.gamma = gamma
+        self.epsilon_adam = epsilon_adam #TODO not really?
+        self.gamma_averaging = gamma_averaging
         self.roh_bar = roh_bar
         self.c_bar = c_bar
         self.batch_size = batch_size
@@ -85,7 +85,7 @@ class RNaD () :
         self.m = 0
         self.n = 0
 
-        self.net_params = {'size':self.tree.max_actions,'channels':2**7,'depth':2,'device':self.device}
+        self.net_params = {'size':self.tree.max_actions,'width':2**7,'device':self.device}
         self.net: net.ConvNet = None
         self.net_target: net.ConvNet = None
         self.net_reg: net.ConvNet = None
@@ -129,9 +129,9 @@ class RNaD () :
                         reward,
                         player,
                         lambda_=1.0,
-                        c=1.0,
-                        rho=torch.inf,
-                        eta=0.2,
+                        c=self.c_bar,
+                        rho=self.roh_bar, #not rho bar? or always less than 1 anyway
+                        eta=self.eta,
                     )
                     v_target_list.append(v_target)
                     has_played_list.append(has_played)
@@ -151,7 +151,7 @@ class RNaD () :
                 episodes.masks,
                 importance_sampling_correction,
                 clip=self.neurd_clip,
-                threshold=2.0,
+                threshold=self.beta,
             )
 
             loss = loss_v + loss_nerd
@@ -172,7 +172,7 @@ class RNaD () :
             # logging.info(f"Training step: {n} {repr(tqdm_repr)}")
 
     def _new_net (self) -> nn.Module:
-        return net.ConvNet(**self.net_params)
+        return net.MLP(**self.net_params)
 
     def _load_checkpoint (self, m, n):
         saved_dict = torch.load(os.path.join(self.directory, str(m), str(n)))
@@ -257,8 +257,8 @@ class RNaD () :
         may_resume, delta_m = self._get_delta_m()
 
         while may_resume:
-
             logging.info('m:{}, n:{}'.format(self.m, self.n))
+
             while self.n < delta_m:
                 alpha = self.alpha_lambda(self.n, delta_m)
 
@@ -282,7 +282,7 @@ class RNaD () :
                 params2 = self.net_target.state_dict()
                 for name1, param1 in params1.items():
                     params2[name1].data.copy_(
-                        self.gamma * param1.data + (1-self.gamma)*params2[name1].data
+                        self.gamma_averaging * param1.data + (1-self.gamma_averaging)*params2[name1].data
                     )
                 self.net_target.load_state_dict(params2)
 
@@ -322,27 +322,27 @@ if __name__ == '__main__' :
     logging.basicConfig(level=logging.DEBUG)
 
     trial = RNaD(
-        device=torch.device('cpu'),
-        eta=.2,
+        device=torch.device('cuda'),
+        eta=1,
         # schedule for number of steps before updating regularizer policies
         # e.g. if m < 100 then delta_m = 10_000 etc
-        delta_m_0 = (400, 1000, 2000,),
-        delta_m_1 = (100, 200, 1000,),
-        lr=5*10**-5,
+        delta_m_0 = (20, 50, 100, 300),
+        delta_m_1 = (200, 200, 1000, 2000),
+        lr=1*10**-5,
         batch_size=2**4,
         beta=2, # logit clip
-        neurd_clip=10**4, # Q value clip
+        neurd_clip=10**3, # Q value clip
         grad_clip=10**4, # gradient clip
 
         # These probably aren't as important
         b1_adam=0,
         b2_adam=.999,
         epsilon_adam=10**-8, # Adam optim params
-        gamma=.001, #averaging for target net
+        gamma_averaging=.001, #averaging for target net
         roh_bar=1,
         c_bar=1,
         # directory_name='expl save test',
-        # tree_id='2x2rootmixed',
+        # directory_name='gottagofast6',
         tree_id='recent',
         )
 
