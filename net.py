@@ -14,6 +14,7 @@ import random
 class MLP (nn.Module):
     def __init__(self, size, width, device=torch.device('cpu:0'), dtype=torch.float):
         super().__init__()
+        self.device = device
         self.value_fc0 = nn.Linear(2*size**2, width, device=device, dtype=dtype)
         self.value_fc1 = nn.Linear(width, 1, device=device, dtype=dtype)
         self.policy_fc0 = nn.Linear(2*size**2, width, device=device, dtype=dtype)
