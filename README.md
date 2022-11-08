@@ -11,3 +11,5 @@ Defines function to measure the exploitablity ("NashConv") of a net-parameterize
 
 rnad.py
 Defines RNaD class which contains all the hyper parameters used in the algorithm, as well as saves and loads checkpoints in the project directory
+
+![Alt text](graph.png?raw=true "Title")
