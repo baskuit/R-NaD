@@ -66,6 +66,9 @@ class RNaD () :
             directory_name = str(int(time.perf_counter()))
         self.directory_name = directory_name
 
+        # self.net_params = {'size':self.tree.max_actions,'width':2**7,'device':self.device}
+        self.net_params = {'size':self.tree.max_actions,'depth':2,'channels':2**5,'batch_norm':False,'device':self.device}
+
         #### #### #### ####
         self.saved_keys = [key for key in self.__dict__.keys() if key != 'tree']
         #### #### #### ####
@@ -75,8 +78,7 @@ class RNaD () :
 
         self.m = 0
         self.n = 0
-        self.total_steps = 0
-        self.net_params = {'size':self.tree.max_actions,'width':2**7,'device':self.device}
+        self.total_steps = 0 #saved in checkpoint
         self.net: net.ConvNet = None
         self.net_target: net.ConvNet = None
         self.net_reg: net.ConvNet = None
@@ -88,6 +90,9 @@ class RNaD () :
         self.loss_neurd = {}
         self.nash_conv = {}
         self.nash_conv_target = {}
+
+    def _new_net (self) -> nn.Module:
+        return net.ConvNet(**self.net_params)
 
     def _initialize (self):
         
@@ -122,11 +127,7 @@ class RNaD () :
                     params_dict[key] = self.directory_name
                     continue
                 if key == 'tree_hash':
-                    if hasattr(self.tree, 'hash'):
-                        print('loaded!', params_dict['tree_hash'])
-                        print('here!', self.tree.hash)
-
-                        assert(params_dict['tree_hash'] == self.tree.hash)
+                    assert(params_dict['tree_hash'] == self.tree.hash)
                 self.__dict__[key] = value
             torch.save(params_dict,  os.path.join(self.directory, 'params'))
 
@@ -136,9 +137,6 @@ class RNaD () :
             self.n = max(checkpoints)
             self._load_checkpoint(self.m, self.n)
             self._load_logs()
-
-    def _new_net (self) -> nn.Module:
-        return net.MLP(**self.net_params)
 
     def _load_checkpoint (self, m, n):
         saved_dict = torch.load(os.path.join(self.directory, str(m), str(n)))
@@ -279,9 +277,9 @@ class RNaD () :
         checkpoint_mod=1000,
         expl_mod=1,
         loss_mod=20,
-    ) -> None: # modifies saved stats for graphs 
+    ) -> None:
 
-        # self.tree.display()
+        self.tree.display()
 
         may_resume, delta_m = self._get_delta_m()
 
@@ -317,11 +315,8 @@ class RNaD () :
                     self._save_checkpoint(nash_conv_data=nash_conv_data)
 
                 episodes = game.Episodes(self.tree, self.batch_size)
-                episodes.generate(self.net_target)
+                episodes.generate(self.net)
                 to_log = self._learn(episodes, alpha)
-                if self.total_steps % loss_mod == 0:
-                    self.loss_value[self.total_steps] = to_log['loss_v']
-                    self.loss_neurd[self.total_steps] = to_log['loss_nerd']
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 params1 = self.net.state_dict()
@@ -331,6 +326,10 @@ class RNaD () :
                         self.gamma_averaging * param1.data + (1-self.gamma_averaging)*params2[name1].data
                     )
                 self.net_target.load_state_dict(params2)
+
+                if self.total_steps % loss_mod == 0:
+                    self.loss_value[self.total_steps] = to_log['loss_v']
+                    self.loss_neurd[self.total_steps] = to_log['loss_nerd']
 
                 self.n += 1
                 self.total_steps += 1
@@ -357,14 +356,19 @@ class RNaD () :
         self.resume(max_updates=max_updates,checkpoint_mod=checkpoint_mod,expl_mod=expl_mod,loss_mod=loss_mod)
 
     def print_logs(self):
-        fig, ax = pyplot.subplots(3)
+        fig, ax = pyplot.subplots(4)
         ax[0].plot(list(self.loss_value.keys()), list(self.loss_value.values()))
         ax[1].plot(list(self.loss_neurd.keys()), list(self.loss_neurd.values()))
         ax[2].plot(list(self.nash_conv.keys()), list(self.nash_conv.values()))
-
+        ax[3].plot(list(self.nash_conv_target.keys()), list(self.nash_conv_target.values()))
         ax[0].set_ylim(0, 2)
+        ax[0].set_title('value loss')
         ax[1].set_ylim(-2, 2)
+        ax[1].set_title('neurd loss')
         ax[2].set_ylim(0, 2)
+        ax[2].set_title('NashConv')
+        ax[3].set_ylim(0, 2)
+        ax[3].set_title('NashConv (target)')
         pyplot.show()
 
 if __name__ == '__main__' :
@@ -377,20 +381,18 @@ if __name__ == '__main__' :
     logging.basicConfig(level=logging.DEBUG)
 
     tree = game.Tree()
-    tree.load('depth3_-5,3,3,0')
+    tree.load('depth4')
     tree.to(torch.device('cuda'))
-
-    print(tree.hash)
 
     trial = RNaD(
         tree=tree,
-        # directory_name='37098',
+        directory_name='save_params_as_actor',
         
         device=torch.device('cuda'),
         eta=.2,
 
         delta_m_0 = (20, 50, 100, 300),
-        delta_m_1 = (100, 100, 1000, 2000),
+        delta_m_1 = (100, 100, 200, 2000),
         lr=5*10**-4,
         batch_size=2**9,
         beta=2, # logit clip
@@ -406,7 +408,7 @@ if __name__ == '__main__' :
         c_bar=1,
     )
 
-    trial.run(max_updates=100)
+    trial.run(max_updates=50)
     trial.print_logs()
 
     # def hash_test ():
