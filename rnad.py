@@ -18,8 +18,8 @@ from typing import Any, List, Sequence, Union
 class RNaD () :
 
     def __init__ (self,
+        tree: game.Tree,
         # R-NaD parameters, see paper
-        tree_id : str,
         eta=.2,
         delta_m_0 = (100, 165, 200,),
         delta_m_1 = (10_000, 100_000, 35_000,),
@@ -38,9 +38,11 @@ class RNaD () :
         n_discrete=32,
         device=torch.device('cuda'),
         directory_name=None,
-
     ):
-        self.tree_id = tree_id,
+
+        self.tree = tree
+        self.tree_hash = 0
+        # self.tree_hash = self.tree.hash
 
         self.eta = eta
         self.delta_m_0 = delta_m_0
@@ -58,38 +60,140 @@ class RNaD () :
         self.batch_size = batch_size
         self.epsilon_threshold = epsilon_threshold
         self.n_discrete = n_discrete
+        
 
-        saved_runs_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs')    
-        if not os.path.exists(saved_runs_dir):
-            os.mkdir(saved_runs_dir)
         if directory_name is None:
             directory_name = str(int(time.perf_counter()))
         self.directory_name = directory_name
-        self.directory = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', directory_name)       
-        if not os.path.exists(self.directory):
-            os.mkdir(self.directory)
 
         #### #### #### ####
-        self.saved_keys = [key for key in self.__dict__.keys()]
+        self.saved_keys = [key for key in self.__dict__.keys() if key != 'tree']
         #### #### #### ####
 
+        self.directory = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', directory_name)   
         self.device = device
-
-        self.alpha_lambda = lambda n, delta_m: 1 if n > delta_m / 2 else n * 2 / delta_m
-
-        self.tree = game.Tree()
-        self.tree.load(tree_id)
-        logging.debug("Tree {} loaded, index tensor has shape {}".format(tree_id, self.tree.index.shape))
-        self.tree.to(self.device)
 
         self.m = 0
         self.n = 0
-
+        self.total_steps = 0
         self.net_params = {'size':self.tree.max_actions,'width':2**7,'device':self.device}
         self.net: net.ConvNet = None
         self.net_target: net.ConvNet = None
         self.net_reg: net.ConvNet = None
         self.net_reg_: net.ConvNet = None
+
+        self.alpha_lambda = lambda n, delta_m: 1 if n > delta_m / 2 else n * 2 / delta_m
+
+        self.loss_value = {}
+        self.loss_neurd = {}
+        self.nash_conv = {}
+        self.nash_conv_target = {}
+
+    def _initialize (self):
+        
+        if not os.path.exists(self.directory):
+            os.mkdir(self.directory)
+
+        updates = [int(os.path.relpath(f.path, self.directory)) for f in os.scandir(self.directory) if f.is_dir()]
+        if not updates:
+            if hasattr(self.tree, 'hash'):
+                self.tree_hash = tree.hash
+            params_dict = {key : self.__dict__[key] for key in self.saved_keys}
+            torch.save(params_dict,  os.path.join(self.directory, 'params'))
+
+            os.mkdir(os.path.join(self.directory, '0'))
+            self.net = self._new_net()
+            self.net_target = self._new_net()
+            self.net_target.load_state_dict(self.net.state_dict())
+            self.net_reg = self._new_net()
+            self.net_reg.load_state_dict(self.net.state_dict())
+            self.net_reg_ = self._new_net()
+            self.net_reg_.load_state_dict(self.net.state_dict())
+            self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
+            self.m = 0
+            self.n = 0
+            self._save_checkpoint()
+
+        else:
+
+            params_dict = torch.load(os.path.join(self.directory, 'params'))
+            for key, value in params_dict.items():
+                if key == 'directory_name':
+                    params_dict[key] = self.directory_name
+                    continue
+                if key == 'tree_hash':
+                    if hasattr(self.tree, 'hash'):
+                        print('loaded!', params_dict['tree_hash'])
+                        print('here!', self.tree.hash)
+
+                        assert(params_dict['tree_hash'] == self.tree.hash)
+                self.__dict__[key] = value
+            torch.save(params_dict,  os.path.join(self.directory, 'params'))
+
+            self.m = max(updates)
+            last_update = os.path.join(self.directory, str(self.m))
+            checkpoints = [int(os.path.relpath(f.path, last_update)) for f in os.scandir(last_update) if not f.is_dir()]
+            self.n = max(checkpoints)
+            self._load_checkpoint(self.m, self.n)
+            self._load_logs()
+
+    def _new_net (self) -> nn.Module:
+        return net.MLP(**self.net_params)
+
+    def _load_checkpoint (self, m, n):
+        saved_dict = torch.load(os.path.join(self.directory, str(m), str(n)))
+        self.total_steps = saved_dict['total_steps']
+        self.net_params = saved_dict['net_params']
+        self.net = self._new_net()
+        self.net.load_state_dict(saved_dict['net'])
+        self.net_target = self._new_net()
+        self.net_target.load_state_dict(saved_dict['net_target'])
+        self.net_reg = self._new_net()
+        self.net_reg.load_state_dict(saved_dict['net_reg'])
+        self.net_reg_ = self._new_net()
+        self.net_reg_.load_state_dict(saved_dict['net_reg_'])
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
+        self.optimizer.load_state_dict(saved_dict['optimizer'])
+
+    def _save_checkpoint (self, nash_conv_data=None):
+        saved_dict = {
+            'total_steps':self.total_steps,
+            'net_params':self.net_params,
+            'net':self.net.state_dict(),
+            'net_target':self.net.state_dict(),
+            'net_reg':self.net.state_dict(),
+            'net_reg_':self.net.state_dict(),
+            'optimizer':self.optimizer.state_dict(),
+            'nash_conv_data':nash_conv_data,
+        }
+        if not os.path.exists(os.path.join(self.directory, str(self.m))):
+            os.mkdir(os.path.join(self.directory, str(self.m)))
+        torch.save(saved_dict, os.path.join(self.directory, str(self.m), str(self.n)))
+
+    def _save_logs (self):
+        saved_dict = {
+            'loss_value':self.loss_value,
+            'loss_neurd':self.loss_neurd,
+            'nash_conv':self.nash_conv,
+            'nash_conv_target':self.nash_conv_target,
+        }
+        torch.save(saved_dict, os.path.join(self.directory, 'logs'))
+
+    def _load_logs (self):
+        try:
+            saved_dict = torch.load(os.path.join(self.directory, 'logs'))
+            for key, value in saved_dict.items():
+                self.__dict__[key] = value
+        except Exception:
+            pass
+
+    def _get_delta_m (self) -> tuple[bool, int]:
+        bounding_indices = [_ for _, bound in enumerate(self.delta_m_0) if bound > self.m]
+        if not bounding_indices:
+            return False, 0
+
+        idx = min(bounding_indices)
+        return True, self.delta_m_1[idx]
 
     def _learn(
         self,
@@ -167,105 +271,34 @@ class RNaD () :
                 "loss_total": loss.item(),
                 "traj_len": avg_traj_len.item(),
             }
-
-            # tqdm_repr = {k: round(v, 4) for k, v in to_log.items()}
-            # logging.info(f"Training step: {n} {repr(tqdm_repr)}")
-
-    def _new_net (self) -> nn.Module:
-        return net.MLP(**self.net_params)
-
-    def _load_checkpoint (self, m, n):
-        saved_dict = torch.load(os.path.join(self.directory, str(m), str(n)))
-        self.net_params = saved_dict['net_params']
-        self.net = self._new_net()
-        self.net.load_state_dict(saved_dict['net'])
-        self.net_target = self._new_net()
-        self.net_target.load_state_dict(saved_dict['net_target'])
-        self.net_reg = self._new_net()
-        self.net_reg.load_state_dict(saved_dict['net_reg'])
-        self.net_reg_ = self._new_net()
-        self.net_reg_.load_state_dict(saved_dict['net_reg_'])
-        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
-        self.optimizer.load_state_dict(saved_dict['optimizer'])
-
-    def _save_checkpoint (self, nash_conv_data=None):
-        saved_dict = {
-            'net_params':self.net_params,
-            'net':self.net.state_dict(),
-            'net_target':self.net.state_dict(),
-            'net_reg':self.net.state_dict(),
-            'net_reg_':self.net.state_dict(),
-            'optimizer':self.optimizer.state_dict(),
-            'nash_conv_data':nash_conv_data,
-        }
-        if not os.path.exists(os.path.join(self.directory, str(self.m))):
-            os.mkdir(os.path.join(self.directory, str(self.m)))
-        torch.save(saved_dict, os.path.join(self.directory, str(self.m), str(self.n)))
-         
-    def initialize (self):
-        # look through dir to find most recent saved networks, otherwise initialize:
-
-        folder_names_as_int = [int(os.path.relpath(f.path, self.directory)) for f in os.scandir(self.directory) if f.is_dir()]
-        
-        if not folder_names_as_int:
-            
-            params_dict = {key : self.__dict__[key] for key in self.saved_keys}
-            torch.save(params_dict,  os.path.join(self.directory, 'params'))
-
-            os.mkdir(os.path.join(self.directory, '0'))
-            self.m = 0
-            self.n = 0
-            self.net = self._new_net()
-            self.net_target = self._new_net()
-            self.net_target.load_state_dict(self.net.state_dict())
-            self.net_reg = self._new_net()
-            self.net_reg.load_state_dict(self.net.state_dict())
-            self.net_reg_ = self._new_net()
-            self.net_reg_.load_state_dict(self.net.state_dict())
-            self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
-            self._save_checkpoint()
-
-        else:
-
-            params_dict = torch.load(os.path.join(self.directory, 'params'))
-            # assert(self.tree_id == params_dict['tree_id'])
-            for key, value in params_dict.items():
-                self.__dict__[key] = value
-            self.m = max(folder_names_as_int)
-            logging.debug('initializing net, found largest m: {}'.format(self.m))
-            last_outer_step_dir = os.path.join(self.directory, str(self.m))
-            checkpoints = [int(os.path.relpath(f.path, last_outer_step_dir)) for f in os.scandir(last_outer_step_dir) if not f.is_dir()]
-            self.n = max(checkpoints)
-
-            self._load_checkpoint(self.m, self.n)
-
-    def _get_delta_m (self) -> tuple[bool, int]:
-        bounding_indices = [_ for _, bound in enumerate(self.delta_m_0) if bound > self.m]
-        if not bounding_indices:
-            return False, 0
-
-        idx = min(bounding_indices)
-        return True, self.delta_m_1[idx]
-
+            return to_log
             
     def resume (
         self,
+        max_updates=10**6,
         checkpoint_mod=1000,
         expl_mod=1,
-    ) :
+        loss_mod=20,
+    ) -> None: # modifies saved stats for graphs 
+
+        # self.tree.display()
 
         may_resume, delta_m = self._get_delta_m()
 
-        while may_resume:
+        updates = 0
+
+        while may_resume and updates < max_updates:
+
             logging.info('m:{}, n:{}'.format(self.m, self.n))
 
             while self.n < delta_m:
-                alpha = self.alpha_lambda(self.n, delta_m)
 
+                alpha = self.alpha_lambda(self.n, delta_m)
+                    
                 if self.n % checkpoint_mod == 0:
                     nash_conv_data = None
                     if self.m % expl_mod == 0 and self.n == 0:
-                        logging.info('net')
+                        logging.info('\nnet')
                         nash_conv_data = metric.nash_conv(self.tree, self.net)
                         mean_nash_conv = metric.mean_nash_conv_by_depth(nash_conv_data)
                         logging.info('mean nash_conv by depth:')
@@ -277,27 +310,20 @@ class RNaD () :
                         logging.info('mean nash_conv by depth:')
                         for depth, nash_conv in mean_nash_conv_target.items():
                             logging.info('depth:{}, nash_conv:{}'.format(depth, nash_conv))
+                        self.nash_conv[self.total_steps] = (nash_conv_data.max_1 - nash_conv_data.min_2)[1].item()
+                        self.nash_conv_target[self.total_steps] = (nash_conv_data_target.max_1 - nash_conv_data_target.min_2)[1].item()
 
-
-                        test_obs_1 = self.tree.expected_value
-                        test_obs_2 = self.tree.legal
-                        test_obs = torch.cat([test_obs_1, test_obs_2], dim=1)
-                        logit, policy, value, _ = self.net.forward(test_obs)
-                        for _ in range(1, 2):
-                            # print(logit[_])
-                            
-                            print(nash_conv_data.max_1[_], nash_conv_data.min_2[_])
-                            print(nash_conv_data.policy[_])
-                            print(self.tree.nash[_])
-                        print('\n')
+                    # TODO create function for test observation on root node etc
                     self._save_checkpoint(nash_conv_data=nash_conv_data)
 
                 episodes = game.Episodes(self.tree, self.batch_size)
                 episodes.generate(self.net_target)
-                self._learn(episodes, alpha)
+                to_log = self._learn(episodes, alpha)
+                if self.total_steps % loss_mod == 0:
+                    self.loss_value[self.total_steps] = to_log['loss_v']
+                    self.loss_neurd[self.total_steps] = to_log['loss_nerd']
                 self.optimizer.step()
                 self.optimizer.zero_grad()
-
                 params1 = self.net.state_dict()
                 params2 = self.net_target.state_dict()
                 for name1, param1 in params1.items():
@@ -307,6 +333,8 @@ class RNaD () :
                 self.net_target.load_state_dict(params2)
 
                 self.n += 1
+                self.total_steps += 1
+
 
             self.n = 0
             self.m += 1
@@ -314,23 +342,30 @@ class RNaD () :
             self.net_reg = self.net_target
             
             may_resume, delta_m = self._get_delta_m()
+            updates += 1
+
+            self._save_logs()
 
     def run (
         self,
+        max_updates=10**6,
         checkpoint_mod=1000,
         expl_mod=1,
+        loss_mod=20
     ):
-        self.initialize()
-        self.resume(checkpoint_mod=checkpoint_mod, expl_mod=expl_mod)
-        # try:
-        #     self.resume(expls, expl_mod=expl_mod)
-        # except KeyboardInterrupt:
-        #     fig, ax = pyplot.subplots()
-        #     ax.plot([_[0] for _ in expls], [_[1] for _ in expls])
-        #     pyplot.ylim([0, 2])
-        #     fig.savefig("test.png")
-        #     pyplot.show()
+        self._initialize()
+        self.resume(max_updates=max_updates,checkpoint_mod=checkpoint_mod,expl_mod=expl_mod,loss_mod=loss_mod)
 
+    def print_logs(self):
+        fig, ax = pyplot.subplots(3)
+        ax[0].plot(list(self.loss_value.keys()), list(self.loss_value.values()))
+        ax[1].plot(list(self.loss_neurd.keys()), list(self.loss_neurd.values()))
+        ax[2].plot(list(self.nash_conv.keys()), list(self.nash_conv.values()))
+
+        ax[0].set_ylim(0, 2)
+        ax[1].set_ylim(-2, 2)
+        ax[2].set_ylim(0, 2)
+        pyplot.show()
 
 if __name__ == '__main__' :
     """"
@@ -341,15 +376,23 @@ if __name__ == '__main__' :
 
     logging.basicConfig(level=logging.DEBUG)
 
+    tree = game.Tree()
+    tree.load('depth3_-5,3,3,0')
+    tree.to(torch.device('cuda'))
+
+    print(tree.hash)
+
     trial = RNaD(
+        tree=tree,
+        # directory_name='37098',
+        
         device=torch.device('cuda'),
-        eta=5,
-        # schedule for number of steps before updating regularizer policies
-        # e.g. if m < 100 then delta_m = 10_000 etc
+        eta=.2,
+
         delta_m_0 = (20, 50, 100, 300),
-        delta_m_1 = (500, 1000, 1000, 2000),
-        lr=5*10**-5,
-        batch_size=2**6,
+        delta_m_1 = (100, 100, 1000, 2000),
+        lr=5*10**-4,
+        batch_size=2**9,
         beta=2, # logit clip
         neurd_clip=10**3, # Q value clip
         grad_clip=10**4, # gradient clip
@@ -361,13 +404,37 @@ if __name__ == '__main__' :
         gamma_averaging=.001, #averaging for target net
         roh_bar=1,
         c_bar=1,
-        # directory_name='expl save test',
-        # directory_name='gottagofast6',
-        tree_id='recent',
-        )
+    )
 
-    trial.run(
-        checkpoint_mod=10**3,
-        expl_mod=1,
-    ) 
-    # expl mod is after how many steps to calculate NashConv. Set to 1 for large delta_m
+    trial.run(max_updates=100)
+    trial.print_logs()
+
+    # def hash_test ():
+    #     """
+    #     !!! You must delete hash_test dir first
+    #     """
+    #     tree = game.Tree(device=torch.device('cuda'))
+    #     tree._generate()
+    #     tree.save()
+    #     trial = RNaD(tree=tree, directory_name='hash_test', device=torch.device('cuda'),
+    #         delta_m_0 = (20, 50, 100, 300),
+    #         delta_m_1 = (100, 500, 1000, 2000),
+    #         batch_size=2**8,
+    #     )
+    #     trial._initialize()
+    #     trial.resume(max_updates=1)
+
+
+
+    #     tree = game.Tree(device=torch.device('cuda'))
+    #     tree._generate()
+    #     tree.save()
+    #     trial = RNaD(tree=tree, directory_name='hash_test', device=torch.device('cuda'),
+    #         delta_m_0 = (20, 50, 100, 300),
+    #         delta_m_1 = (500, 500, 1000, 2000),
+    #         batch_size=2**8,
+    #     )
+
+    #     trial._initialize()
+    #     trial.resume(max_updates=1)
+
