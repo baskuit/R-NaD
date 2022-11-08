@@ -65,7 +65,7 @@ class RNaD () :
         if directory_name is None:
             directory_name = str(int(time.perf_counter()))
         self.directory_name = directory_name
-
+        self.device = device
         # self.net_params = {'size':self.tree.max_actions,'width':2**7,'device':self.device}
         self.net_params = {'size':self.tree.max_actions,'depth':2,'channels':2**5,'batch_norm':False,'device':self.device}
 
@@ -74,7 +74,6 @@ class RNaD () :
         #### #### #### ####
 
         self.directory = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', directory_name)   
-        self.device = device
 
         self.m = 0
         self.n = 0
