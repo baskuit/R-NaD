@@ -20,12 +20,16 @@ class NashConvData ():
         self.max_1 =  torch.zeros((tree.size,), device=tree.device, dtype=torch.float)
         self.min_2 =  torch.zeros((tree.size,), device=tree.device, dtype=torch.float)
         self.depth =  torch.zeros((tree.size,), device=tree.device, dtype=torch.int)
+    def to (self, device):
+        for key, value in self.__dict__.items():
+            if torch.is_tensor(value):
+                self.__dict__[key] = value.to(device)
 
 def nash_conv (tree : game.Tree, net : net.ConvNet, inference_batch_size=10**5) :
 
     data = NashConvData(tree)
 
-    # net.eval()
+    net.eval()
     for _ in range(tree.size // inference_batch_size + 1):
         slice_range = torch.arange(_ * inference_batch_size, min((_+1) * inference_batch_size, tree.size), device=tree.device)
         value_slice = tree.expected_value[slice_range]
@@ -36,8 +40,13 @@ def nash_conv (tree : game.Tree, net : net.ConvNet, inference_batch_size=10**5) 
             data.policy[slice_range, :tree.max_actions] = net.forward_policy(inference_slice)
             inference_slice = torch.cat([-value_slice, legal_slice], dim=1).swapaxes(2, 3)
             data.policy[slice_range, tree.max_actions:] = net.forward_policy(inference_slice)
+    tree.to(torch.device('cpu'))
+    data.to(torch.device('cpu'))
     max_min(tree, data)
-    # net.train()
+    tree.to(net.device)
+    data.to(net.device)
+
+    net.train()
     return data
 
 def max_min (tree : game.Tree, data : NashConvData, root_index=1, depth=0):
