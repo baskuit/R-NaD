@@ -285,8 +285,6 @@ class RNaD () :
         loss_mod=20,
     ) -> None:
 
-        self.tree.display()
-
         may_resume, delta_m = self._get_delta_m()
 
         updates = 0
