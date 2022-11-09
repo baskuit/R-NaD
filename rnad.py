@@ -38,6 +38,7 @@ class RNaD () :
         n_discrete=32,
         device=torch.device('cuda'),
         directory_name=None,
+        net_params=None,
     ):
 
         self.tree = tree
@@ -67,7 +68,9 @@ class RNaD () :
         self.directory_name = directory_name
         self.device = device
         # self.net_params = {'size':self.tree.max_actions,'width':2**7,'device':self.device}
-        self.net_params = {'type':'ConvNet','size':self.tree.max_actions,'depth':2,'channels':2**5,'batch_norm':False,'device':self.device}
+        if net_params is None:
+            net_params = {'type':'ConvNet','size':self.tree.max_actions,'depth':2,'channels':2**5,'batch_norm':False,'device':self.device}
+        self.net_params = net_params
 
         #### #### #### ####
         self.saved_keys = [key for key in self.__dict__.keys() if key != 'tree']
@@ -385,18 +388,21 @@ if __name__ == '__main__' :
     logging.basicConfig(level=logging.DEBUG)
 
     tree = game.Tree()
-    tree.load('depth4')
+    tree.load('depth5')
     tree.to(torch.device('cuda'))
+    tree.display()
 
     trial = RNaD(
         tree=tree,
-        directory_name='no_eta',
+        directory_name='depth5-{}'.format(int(time.perf_counter())),
+        # directory_name='depth5-17375',
         
+        net_params={'type':'ConvNet','size':tree.max_actions,'depth':1,'channels':2**5,'batch_norm':False,'device':tree.device},
         device=torch.device('cuda'),
-        eta=0,
+        eta=.2,
         delta_m_0 = [20, 50, 100, 300],
-        delta_m_1 = [100, 100, 200, 2000],
-        lr=5*10**-4,
+        delta_m_1 = [400, 400, 200, 2000],
+        lr=1*10**-3,
         batch_size=2**9,
         beta=2, # logit clip
         neurd_clip=10**3, # Q value clip
@@ -411,7 +417,7 @@ if __name__ == '__main__' :
         c_bar=1,
     )
 
-    trial.run(max_updates=50)
+    trial.run(max_updates=51, expl_mod=10, loss_mod=20)
     trial.save_graph()
 
     # def hash_test ():
