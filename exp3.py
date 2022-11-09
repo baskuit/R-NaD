@@ -14,7 +14,7 @@ class Pool :
 
     """
 
-    def __init__ (self, refs:list, eta=.1):
+    def __init__ (self, refs:list, eta=.01):
         self.refs = refs
         self.logits = [0 for _ in refs]
         self.scores = [0 for _ in refs]
@@ -34,10 +34,8 @@ class Pool :
         self.size = sum(mask)
 
     def introduce (self, x):
-        if x in self.refs:
-            return
-        # mean = sum(self.logits) / len(self.logits)
-        self.refs.append(x)
+        if not x in self.refs:
+            self.refs.append(x)
         self.logits = [0 for _ in self.refs]
         self.scores = [0 for _ in self.refs]
         self.selections = [0 for _ in self.refs]
@@ -84,11 +82,11 @@ class Pool :
         self.scores[j] -= u
 
     def display (self,):
-        print('Pool:')
+        print('Net ,Soft,Val ,N   ,Sel ,Logit')
         p = self.softmax()
         for _, logit, w, n, p in zip(self.refs, self.logits, self.scores, self.selections, p):
             u = w / n if n else -1
-            print("{0: <4}: {1: <4}, {2: <4}, {3: <4}, {4}".format(str(_), round(p, 3), round(u, 3), n, round(logit, 3)))
+            print("{0: <4}:{1: <4},{2: <4},{3: <4},{4}".format(str(_), round(p, 3), round(u, 3), n, round(logit, 3)))
 
 
 if __name__ == '__main__':

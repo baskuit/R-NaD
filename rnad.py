@@ -325,7 +325,7 @@ class RNaD () :
                         logging.info('mean nash_conv by depth:')
                         for depth, nash_conv in mean_nash_conv.items():
                             logging.info('depth:{}, nash_conv:{}'.format(depth, nash_conv))
-                        logging.info('net target')
+                        logging.info('\nnet target')
                         nash_conv_data_target = metric.nash_conv(self.tree, self.net_target)
                         mean_nash_conv_target = metric.mean_nash_conv_by_depth(nash_conv_data_target)
                         logging.info('mean nash_conv by depth:')
@@ -371,9 +371,7 @@ class RNaD () :
 
             # updating actor pool
             if self.m % pool_mod == 0:
-
-                policy = self.net_pool.answer()
-                rank = sorted(enumerate(self.net_pool.refs), key=lambda _: -policy[_[0]])
+                rank = sorted(enumerate(self.net_pool.refs), key=lambda _: -self.net_pool.selections[_[0]])
                 top = [_[0] for _ in rank[:max_actors]]
                 self.net_pool.display()
                 mask = [_ in top for _ in range(self.net_pool.size)]
@@ -398,10 +396,16 @@ class RNaD () :
         max_updates=10**6,
         checkpoint_mod=1000,
         expl_mod=1,
-        loss_mod=20
+        loss_mod=20,
+        pool_mod=10, #  number of outer steps to add new actors
+        new_actors=[None, 0],
+        max_actors=6,
     ):
         self._initialize()
-        self._resume(max_updates=max_updates,checkpoint_mod=checkpoint_mod,expl_mod=expl_mod,loss_mod=loss_mod)
+        try:
+            self._resume(max_updates=max_updates,checkpoint_mod=checkpoint_mod,expl_mod=expl_mod,loss_mod=loss_mod, pool_mod=pool_mod,new_actors=new_actors,max_actors=max_actors)
+        except KeyboardInterrupt:
+            self.save_graph(self)
 
     def save_graph(self):
         fig, ax = pyplot.subplots(4)
@@ -439,7 +443,7 @@ if __name__ == '__main__' :
         delta_m_0 = [20, 50, 100, 300],
         delta_m_1 = [100, 100, 100, 2000],
         lr=1*10**-4,
-        batch_size=2**3,
+        batch_size=2**14,
         beta=2, # logit clip
         neurd_clip=10**3, # Q value clip
         grad_clip=10**4, # gradient clip
@@ -453,7 +457,10 @@ if __name__ == '__main__' :
         c_bar=1,
     )
 
-    trial.run(max_updates=51, expl_mod=1, loss_mod=20)
+    trial.run(max_updates=101, expl_mod=1, loss_mod=100,
+    pool_mod=1, #  number of outer steps to add new actors
+    new_actors=[None, 0],
+    max_actors=1)
     trial.save_graph()
 
     # def hash_test ():

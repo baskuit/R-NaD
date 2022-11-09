@@ -417,6 +417,65 @@ class Episodes () :
 
         net.train()
     
+    def generate_versus (self, net : torch.nn.Module, net_ : torch.nn.Module) :
+        """
+        Play a batch of episodes with a given actor net
+        """
+        values_list = []
+        indices_list = []
+        turns_list = []
+        observations_list = []
+        policy_list = []
+        actions_list = []
+        rewards_list = []
+        masks_list = []
+
+        net.eval()
+        net_.eval()
+        time_start = time.perf_counter()
+
+        while not self.states.terminal:
+
+            indices_list.append(self.states.indices.clone())
+            turns_list.append(self.states.turns.clone())
+        
+            observations = self.states.observations()
+            if self.states.turns[0] == 0:
+                net_to_move = net
+            else:
+                net_to_move = net_
+            with torch.no_grad():
+                logits, policy, value, actions = net_to_move.forward(observations)
+            # actions = torch.zeros_like(policy)
+            rewards = self.states.step(actions)
+            actions_oh = torch.zeros_like(policy)
+            actions_oh[torch.arange(self.batch_size), actions] = 1
+            values_list.append(value.squeeze().detach().clone())
+            observations_list.append(observations)
+            masks_list.append(observations[:, 1, :, 0])
+            policy_list.append(policy)
+            actions_list.append(actions_oh)
+            rewards_list.append(rewards.clone())
+            self.t_eff += 1
+
+        time_end = time.perf_counter()
+        self.generation_time = time_end - time_start
+
+        #ends just before the all 0 indices tensor
+        self.values = torch.stack(values_list, dim=0)
+        self.indices = torch.stack(indices_list, dim=0)
+        self.turns = torch.stack(turns_list, dim=0)
+        self.observations = torch.stack(observations_list, dim=0)
+        self.policy = torch.stack(policy_list, dim=0)
+        self.actions = torch.stack(actions_list, dim=0)
+        self.rewards = torch.stack(rewards_list, dim=0)
+
+        self.masks = torch.stack(masks_list, dim=0)
+        self.q_estimates = torch.zeros_like(self.policy)
+        self.v_estimates = torch.zeros_like(self.rewards)
+
+        net.train()
+
     def display (self,):
         print('Episode params:')
         for key, value in self.__dict__.items():
@@ -441,13 +500,13 @@ if __name__ == '__main__' :
         row_actions=2,
         col_actions=2,
         # depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 1 * (random.random() < .7),
-        depth_bound=4,
+        depth_bound=5,
         # desc='3x3 but 2x2 at root'
     )
     
     tree._generate()
     print(tree.hash)
     print(tree.size)
-    # tree.save('depth4')
+    tree.save('depth5')
 
     print(tree.expected_value[1])
