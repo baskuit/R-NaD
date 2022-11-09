@@ -12,6 +12,7 @@ import vtrace
 import metric
 
 import matplotlib.pyplot as pyplot
+import numpy as np
 
 from typing import Any, List, Sequence, Union
 
@@ -104,6 +105,9 @@ class RNaD () :
         return t(**net_params)
 
     def _initialize (self):
+
+        import exp3
+        self.net_pool = exp3.Pool([None])
         
         if not os.path.exists(self.directory):
             os.mkdir(self.directory)
@@ -162,16 +166,25 @@ class RNaD () :
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
         self.optimizer.load_state_dict(saved_dict['optimizer'])
 
-    def _save_checkpoint (self, nash_conv_data=None):
+    def _load_saved_net (self, net:torch.nn.Module, m, name='net_reg'):
+        # m is the step you are loading it from
+        # use m-1 to get net_reg_...
+        if m is None:
+            net.load_state_dict(self.net.state_dict())
+            return
+        m = max(m, 0)
+        saved_dict = torch.load(os.path.join(self.directory, str(m), '0'))
+        net.load_state_dict(saved_dict[name])
+
+    def _save_checkpoint (self,):
         saved_dict = {
             'total_steps':self.total_steps,
             'net_params':self.net_params,
             'net':self.net.state_dict(),
-            'net_target':self.net.state_dict(),
-            'net_reg':self.net.state_dict(),
-            'net_reg_':self.net.state_dict(),
+            'net_target':self.net_target.state_dict(),
+            'net_reg':self.net_reg.state_dict(),
+            'net_reg_':self.net_reg_.state_dict(),
             'optimizer':self.optimizer.state_dict(),
-            'nash_conv_data':nash_conv_data,
         }
         if not os.path.exists(os.path.join(self.directory, str(self.m))):
             os.mkdir(os.path.join(self.directory, str(self.m)))
@@ -280,19 +293,22 @@ class RNaD () :
             }
             return to_log
             
-    def resume (
+    def _resume (
         self,
         max_updates=10**6,
         checkpoint_mod=1000,
         expl_mod=1,
         loss_mod=20,
+        pool_mod=10, #  number of outer steps to add new actors
+        new_actors=[None, 0],
+        max_actors=6,
     ) -> None:
 
         may_resume, delta_m = self._get_delta_m()
 
-        updates = 0
+        for _ in range(max_updates):
 
-        while may_resume and updates < max_updates:
+            if not may_resume: return
 
             logging.info('m:{}, n:{}'.format(self.m, self.n))
 
@@ -319,10 +335,22 @@ class RNaD () :
                         self.nash_conv_target[self.total_steps] = (nash_conv_data_target.max_1 - nash_conv_data_target.min_2)[1].item()
 
                     # TODO create function for test observation on root node etc
-                    self._save_checkpoint(nash_conv_data=nash_conv_data)
+                    self._save_checkpoint()
 
                 episodes = game.Episodes(self.tree, self.batch_size)
-                episodes.generate(self.net)
+
+                i, j, p, q = self.net_pool.sample()
+                self._load_saved_net(self.net_reg, self.net_pool.refs[i], 'net') # provides int or None to _load_reg_net
+                self._load_saved_net(self.net_reg_, self.net_pool.refs[j], 'net') # for memory purposes we make these the two actor nets
+
+                episodes.generate_versus(self.net_reg, self.net_reg_)
+                # episodes.generate(self.net_target)
+
+                u = torch.mean(episodes.rewards[episodes.rewards != 0]).item() # assumes reward cannot be 0, otherwise incorrect
+                self.net_pool.update(i, j, p, q, u)
+                self._load_saved_net(self.net_reg, self.m, 'net_reg')
+                self._load_saved_net(self.net_reg_, self.m-1, 'net_reg')
+
                 to_log = self._learn(episodes, alpha)
                 self.optimizer.step()
                 self.optimizer.zero_grad()
@@ -341,16 +369,29 @@ class RNaD () :
                 self.n += 1
                 self.total_steps += 1
 
+            # updating actor pool
+            if self.m % pool_mod == 0:
+
+                policy = self.net_pool.answer()
+                rank = sorted(enumerate(self.net_pool.refs), key=lambda _: -policy[_[0]])
+                top = [_[0] for _ in rank[:max_actors]]
+                self.net_pool.display()
+                mask = [_ in top for _ in range(self.net_pool.size)]
+                self.net_pool.filter(mask)
+                for _ in new_actors:
+                    if not _ is None:
+                        _ = self.m + _
+                    self.net_pool.introduce(_)
 
             self.n = 0
             self.m += 1
-            self.net_reg_ = self.net_reg
-            self.net_reg = self.net_target
-            
-            may_resume, delta_m = self._get_delta_m()
-            updates += 1
+            self.net_reg_.load_state_dict(self.net_reg.state_dict())
+            self.net_reg.load_state_dict(self.net_target.state_dict())
 
+
+            may_resume, delta_m = self._get_delta_m()
             self._save_logs()
+
 
     def run (
         self,
@@ -360,7 +401,7 @@ class RNaD () :
         loss_mod=20
     ):
         self._initialize()
-        self.resume(max_updates=max_updates,checkpoint_mod=checkpoint_mod,expl_mod=expl_mod,loss_mod=loss_mod)
+        self._resume(max_updates=max_updates,checkpoint_mod=checkpoint_mod,expl_mod=expl_mod,loss_mod=loss_mod)
 
     def save_graph(self):
         fig, ax = pyplot.subplots(4)
@@ -379,31 +420,26 @@ class RNaD () :
         fig.savefig(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', self.directory_name, 'graph.png'))
 
 if __name__ == '__main__' :
-    """"
-    These are the default main hyperparameters of the R-NaD algorithm.
-    In my earlier tests, I had success with small (~16) batches sizes
-    and higher (.01) learning rates
-    """
 
     logging.basicConfig(level=logging.DEBUG)
 
     tree = game.Tree()
-    tree.load('depth5')
+    tree.load('depth4')
     tree.to(torch.device('cuda'))
     tree.display()
 
     trial = RNaD(
         tree=tree,
-        directory_name='depth5-{}'.format(int(time.perf_counter())),
+        directory_name='depth4-{}'.format(int(time.perf_counter())),
         # directory_name='depth5-17375',
         
         net_params={'type':'ConvNet','size':tree.max_actions,'depth':1,'channels':2**5,'batch_norm':False,'device':tree.device},
         device=torch.device('cuda'),
         eta=.2,
         delta_m_0 = [20, 50, 100, 300],
-        delta_m_1 = [400, 400, 200, 2000],
-        lr=1*10**-3,
-        batch_size=2**9,
+        delta_m_1 = [100, 100, 100, 2000],
+        lr=1*10**-4,
+        batch_size=2**3,
         beta=2, # logit clip
         neurd_clip=10**3, # Q value clip
         grad_clip=10**4, # gradient clip
@@ -417,7 +453,7 @@ if __name__ == '__main__' :
         c_bar=1,
     )
 
-    trial.run(max_updates=51, expl_mod=10, loss_mod=20)
+    trial.run(max_updates=51, expl_mod=1, loss_mod=20)
     trial.save_graph()
 
     # def hash_test ():
