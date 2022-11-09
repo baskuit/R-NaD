@@ -21,8 +21,8 @@ class RNaD () :
         tree: game.Tree,
         # R-NaD parameters, see paper
         eta=.2,
-        delta_m_0 = (100, 165, 200,),
-        delta_m_1 = (10_000, 100_000, 35_000,),
+        delta_m_0 = [100, 165, 200,],
+        delta_m_1 = [10_000, 100_000, 35_000,],
         lr=5*10**-5,
         beta=2,
         neurd_clip=10**3,
@@ -67,12 +67,14 @@ class RNaD () :
         self.directory_name = directory_name
         self.device = device
         # self.net_params = {'size':self.tree.max_actions,'width':2**7,'device':self.device}
-        self.net_params = {'size':self.tree.max_actions,'depth':2,'channels':2**5,'batch_norm':False,'device':self.device}
+        self.net_params = {'type':'ConvNet','size':self.tree.max_actions,'depth':2,'channels':2**5,'batch_norm':False,'device':self.device}
 
         #### #### #### ####
         self.saved_keys = [key for key in self.__dict__.keys() if key != 'tree']
         #### #### #### ####
-
+        saved_runs_dir =  os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs')
+        if not os.path.exists(saved_runs_dir):
+            os.mkdir(saved_runs_dir)
         self.directory = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', directory_name)   
 
         self.m = 0
@@ -91,7 +93,12 @@ class RNaD () :
         self.nash_conv_target = {}
 
     def _new_net (self) -> nn.Module:
-        return net.ConvNet(**self.net_params)
+        if self.net_params['type'] == 'ConvNet':
+            t = net.ConvNet
+        if self.net_params['type'] == 'MLP':
+            t = net.MLP
+        net_params = {_:__ for _, __ in self.net_params.items() if _ != 'type'}
+        return t(**net_params)
 
     def _initialize (self):
         
@@ -101,7 +108,7 @@ class RNaD () :
         updates = [int(os.path.relpath(f.path, self.directory)) for f in os.scandir(self.directory) if f.is_dir()]
         if not updates:
             if hasattr(self.tree, 'hash'):
-                self.tree_hash = tree.hash
+                self.tree_hash = self.tree.hash
             params_dict = {key : self.__dict__[key] for key in self.saved_keys}
             torch.save(params_dict,  os.path.join(self.directory, 'params'))
 
@@ -354,7 +361,7 @@ class RNaD () :
         self._initialize()
         self.resume(max_updates=max_updates,checkpoint_mod=checkpoint_mod,expl_mod=expl_mod,loss_mod=loss_mod)
 
-    def print_logs(self):
+    def save_graph(self):
         fig, ax = pyplot.subplots(4)
         ax[0].plot(list(self.loss_value.keys()), list(self.loss_value.values()))
         ax[1].plot(list(self.loss_neurd.keys()), list(self.loss_neurd.values()))
@@ -368,7 +375,7 @@ class RNaD () :
         ax[2].set_title('NashConv')
         ax[3].set_ylim(0, 2)
         ax[3].set_title('NashConv (target)')
-        pyplot.show()
+        fig.savefig(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', self.directory_name, 'graph.png'))
 
 if __name__ == '__main__' :
     """"
@@ -385,13 +392,12 @@ if __name__ == '__main__' :
 
     trial = RNaD(
         tree=tree,
-        directory_name='save_params_as_actor',
+        directory_name='no_eta',
         
         device=torch.device('cuda'),
-        eta=.2,
-
-        delta_m_0 = (20, 50, 100, 300),
-        delta_m_1 = (100, 100, 200, 2000),
+        eta=0,
+        delta_m_0 = [20, 50, 100, 300],
+        delta_m_1 = [100, 100, 200, 2000],
         lr=5*10**-4,
         batch_size=2**9,
         beta=2, # logit clip
@@ -408,7 +414,7 @@ if __name__ == '__main__' :
     )
 
     trial.run(max_updates=50)
-    trial.print_logs()
+    trial.save_graph()
 
     # def hash_test ():
     #     """
@@ -424,7 +430,6 @@ if __name__ == '__main__' :
     #     )
     #     trial._initialize()
     #     trial.resume(max_updates=1)
-
 
 
     #     tree = game.Tree(device=torch.device('cuda'))
