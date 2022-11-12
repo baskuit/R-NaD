@@ -40,6 +40,7 @@ class RNaD () :
         device=torch.device('cuda'),
         directory_name=None,
         net_params=None,
+        vtrace_gamma=1,
     ):
 
         self.tree = tree
@@ -61,6 +62,7 @@ class RNaD () :
         self.batch_size = batch_size
         self.epsilon_threshold = epsilon_threshold
         self.n_discrete = n_discrete
+        self.vtrace_gamma = vtrace_gamma
         
 
         if directory_name is None:
@@ -263,6 +265,7 @@ class RNaD () :
                         c=self.c_bar,
                         rho=self.roh_bar,
                         eta=self.eta,
+                        gamma=self.vtrace_gamma,
                     )
                     v_target_list.append(v_target)
                     has_played_list.append(has_played)
@@ -400,7 +403,7 @@ if __name__ == '__main__' :
     trial = RNaD(
         tree=tree,
         # directory_name='depth5-{}'.format(int(time.perf_counter())),
-        # directory_name='depth5-20750 batch2^9 deltam100', 
+        # directory_name='depth5-20750 batch2^9 deltam100, discount factor test', 
         directory_name='discrete_test-{}'.format(int(time.perf_counter())),    
         device=torch.device('cuda'),
         eta=.2,
@@ -408,7 +411,7 @@ if __name__ == '__main__' :
         delta_m_0 = [20, 50, 1000, 3000],
         delta_m_1 = [100, 100, 100, 2000],
         lr=1*10**-3,
-        batch_size=2**9,
+        batch_size=2**0,
         beta=2, # logit clip
         neurd_clip=10**4, # Q value clip
         grad_clip=10**4, # gradient clip
@@ -420,6 +423,7 @@ if __name__ == '__main__' :
         gamma_averaging=.001,
         roh_bar=1,
         c_bar=1,
+        vtrace_gamma=.90,
     )
 
     trial.run(max_updates=50, expl_mod=2)
