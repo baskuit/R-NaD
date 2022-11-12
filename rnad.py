@@ -7,6 +7,7 @@ import os
 import time
 
 import game
+import batch
 import net
 import vtrace
 import metric
@@ -43,7 +44,6 @@ class RNaD () :
 
         self.tree = tree
         self.tree_hash = 0
-        # self.tree_hash = self.tree.hash
 
         self.eta = eta
         self.delta_m_0 = delta_m_0
@@ -54,7 +54,7 @@ class RNaD () :
         self.grad_clip = grad_clip
         self.b1_adam = b1_adam
         self.b2_adam = b2_adam
-        self.epsilon_adam = epsilon_adam #TODO not really?
+        self.epsilon_adam = epsilon_adam
         self.gamma_averaging = gamma_averaging
         self.roh_bar = roh_bar
         self.c_bar = c_bar
@@ -222,7 +222,7 @@ class RNaD () :
 
     def _learn(
         self,
-        episodes: game.Episodes,
+        episodes: batch.Episodes,
         alpha:float,
     ):
 
@@ -234,6 +234,8 @@ class RNaD () :
             T = valid.shape[0]
 
             logit, log_pi, pi, v = self.net.forward_batch(episodes)
+            pi_processed = pi
+            # pi_processed = vtrace.process_policy(pi, episodes.masks, self.n_discrete, self.epsilon_threshold) # TODO this function seems to filter masks too? ofc duh
             v_target_list, has_played_list, v_trace_policy_target_list = [], [], []
 
             with torch.no_grad():
@@ -251,7 +253,7 @@ class RNaD () :
                         valid,
                         player_id,
                         policy,
-                        pi,
+                        pi_processed,
                         log_policy_reg,
                         vtrace._player_others(player_id, valid, player),
                         action_oh,
@@ -259,7 +261,7 @@ class RNaD () :
                         player,
                         lambda_=1.0,
                         c=self.c_bar,
-                        rho=self.roh_bar, #not rho bar? or always less than 1 anyway
+                        rho=self.roh_bar,
                         eta=self.eta,
                     )
                     v_target_list.append(v_target)
@@ -273,7 +275,7 @@ class RNaD () :
 
             loss_nerd = vtrace.get_loss_nerd(
                 [logit] * 2,
-                [pi] * 2,
+                [pi_processed] * 2,
                 v_trace_policy_target_list,
                 valid,
                 player_id,
@@ -328,7 +330,7 @@ class RNaD () :
                 if self.n % checkpoint_mod == 0:
                     self._save_checkpoint()
 
-                episodes = game.Episodes(self.tree, self.batch_size)
+                episodes = batch.Episodes(self.tree, self.batch_size)
                 episodes.generate(self.net)
                 to_log = self._learn(episodes, alpha)
 
@@ -397,27 +399,28 @@ if __name__ == '__main__' :
 
     trial = RNaD(
         tree=tree,
-        directory_name='depth5-{}'.format(int(time.perf_counter())),
-        
+        # directory_name='depth5-{}'.format(int(time.perf_counter())),
+        # directory_name='depth5-20750 batch2^9 deltam100', 
+        directory_name='discrete_test-{}'.format(int(time.perf_counter())),    
         device=torch.device('cuda'),
         eta=.2,
 
-        delta_m_0 = [20, 50, 100, 300],
+        delta_m_0 = [20, 50, 1000, 3000],
         delta_m_1 = [100, 100, 100, 2000],
-        lr=1*10**-4,
-        batch_size=2**14,
+        lr=1*10**-3,
+        batch_size=2**9,
         beta=2, # logit clip
         neurd_clip=10**4, # Q value clip
         grad_clip=10**4, # gradient clip
+        net_params= {'type':'ConvNet','size':tree.max_actions,'channels':2**5,'depth':2,'batch_norm':False,'device':tree.device},
 
-        # These probably aren't as important
         b1_adam=0,
         b2_adam=.999,
-        epsilon_adam=10**-8, # Adam optim params
-        gamma_averaging=.001, #averaging for target net
+        epsilon_adam=10**-8,
+        gamma_averaging=.001,
         roh_bar=1,
         c_bar=1,
     )
 
-    trial.run(max_updates=50, expl_mod=5)
+    trial.run(max_updates=50, expl_mod=2)
     trial.save_graph()

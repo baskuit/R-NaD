@@ -4,6 +4,36 @@ import numpy as np
 
 from typing import Any, Callable, NamedTuple, Sequence, Tuple
 
+def process_policy(policy:torch.Tensor, mask:torch.Tensor, n_disc, epsilon_threshold=.03):
+    
+    t_eff, batch_size, n_actions = policy.shape
+    policy = torch.flatten(policy, 0, 1)
+    mask = torch.flatten(mask, 0, 1)
+    new_batch_range = torch.arange(t_eff * batch_size)
+
+    # threshold
+    mask = mask * (
+        (policy >= epsilon_threshold)
+        +
+        (torch.max(policy, dim=-1, keepdim=True).values < epsilon_threshold) #prevent degen case where all < eps)
+    )
+    policy = mask * policy / torch.sum(mask * policy, dim=-1, keepdim=True)
+
+    # discretize
+    blocks = torch.ceil(n_disc * policy).to(torch.int32)
+    result = torch.zeros_like(policy)
+    leftover = n_disc * torch.ones((policy.shape[0]), device=policy.device)
+    order = torch.argsort(policy, descending=True)
+    for i in range(n_actions):
+        block = blocks[new_batch_range, order[:, i]]
+        x = torch.minimum(leftover, block)
+        leftover -= x
+        result[new_batch_range, order[:, i]] += x
+    result /= n_disc
+    policy = policy.view(t_eff, batch_size, n_actions)
+    mask = mask.view(t_eff, batch_size, n_actions)
+    return result.view(t_eff, batch_size, n_actions)
+
 
 class LoopVTraceCarry(NamedTuple):
     """The carry of the v-trace scan loop."""
@@ -56,7 +86,7 @@ def _where(pred: torch.Tensor, true_data: torch.Tensor, false_data: torch.Tensor
 
 def scan(f: Callable, init, xs, length=None, reverse: bool = False):
     if xs is None:
-        xs = [None] * length
+        xs = [torch.zeros((1,))] * length
     carry = init
     ys = []
 

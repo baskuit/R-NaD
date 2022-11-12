@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import game
+import batch
 
 import time
 import logging
@@ -43,7 +43,7 @@ class MLP (nn.Module):
         policy = torch.nn.functional.normalize(exp_logits, dim=-1, p=1)
         return policy
 
-    def forward_batch (self, episodes : game.Episodes) :
+    def forward_batch (self, episodes : batch.Episodes) :
 
         logit_list, log_policy_list, policy_list, value_list = [], [], [], [] 
         for t in range(0, episodes.t_eff + 1):
@@ -143,7 +143,7 @@ class ConvNet (nn.Module):
         policy = F.normalize(policy, dim=1, p=1)
         return policy
 
-    def forward_batch (self, episodes : game.Episodes) :
+    def forward_batch (self, episodes : batch.Episodes) :
 
         logit_list, log_policy_list, policy_list, value_list = [], [], [], [] 
         for t in range(0, episodes.t_eff + 1):
@@ -176,13 +176,16 @@ if __name__ == '__main__' :
     import game
     import metric
 
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
     def speed_test (net):
         start_generating = time.perf_counter()
         # Speed test
         batch_size = 10**4
         steps = 0
         for trial in range(100):
-            episodes = game.Episodes(tree, batch_size)
+            episodes = batch.Episodes(tree, batch_size)
             episodes.generate(net)
             steps += episodes.t_eff * batch_size
         
@@ -196,22 +199,24 @@ if __name__ == '__main__' :
 
     depth_bound_lambda = lambda tree : max(0, tree.depth_bound - (1 if random.random() < .5 else 2))
 
-    tree = game.Tree(
-        max_actions=2,
-        depth_bound=2,
-        max_transitions=2,
-        # depth_bound_lambda=depth_bound_lambda
-    )
+    # tree = game.Tree(
+    #     max_actions=2,
+    #     depth_bound=2,
+    #     max_transitions=2,
+    #     # depth_bound_lambda=depth_bound_lambda
+    # )
 
-    tree._generate()
-    print('tree generated, size: ', tree.value.shape)
-    tree.to(torch.device('cuda:0'))
+    # tree._generate()
+    # print('tree generated, size: ', tree.value.shape)
+    # tree.to(torch.device('cuda:0'))
 
    
-    batch_size = 2**1
-    net_channels=32
-    net_depth=1
-    net =  ConvNet(size=tree.max_actions, channels=net_channels, depth=net_depth, device=tree.device)
+    # batch_size = 2**1
+    # net_channels=32
+    # net_depth=1
+    net =  ConvNet(size=3, channels=2**5, depth=1, device=torch.device('cuda'))
+    net_ =  MLP(size=3, width=2**8, device=torch.device('cuda'))
+    print(count_parameters(net_))
 
-    expl = metric.nash_conv(tree, net)
-    print(expl)
+    # expl = metric.nash_conv(tree, net)
+    # print(expl)
