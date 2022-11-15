@@ -24,6 +24,8 @@ class RNaD () :
         eta=.2,
         delta_m_0 = [100, 165, 200,],
         delta_m_1 = [10_000, 100_000, 35_000,],
+        buffer_size = [1, 1, 1], # This simulates no buffer
+        buffer_mod = [1, 1, 1], # How many steps to grab new batch
         lr=5*10**-5,
         beta=2,
         neurd_clip=10**3,
@@ -49,6 +51,8 @@ class RNaD () :
         self.eta = eta
         self.delta_m_0 = delta_m_0
         self.delta_m_1 = delta_m_1
+        self.buffer_size = buffer_size
+        self.buffer_mod = buffer_mod
         self.lr = lr
         self.beta = beta
         self.neurd_clip = neurd_clip
@@ -143,7 +147,7 @@ class RNaD () :
                 if key == 'device':
                     continue
                 if torch.is_tensor(value):
-                    params_dict['tree_hash'] = params_dict['tree_hash'].to(self.device)
+                    params_dict[key] = params_dict[key].to(self.device)
                 if key == 'tree_hash':
                     assert(params_dict['tree_hash'] == self.tree.hash)
                 self.__dict__[key] = value
@@ -206,7 +210,10 @@ class RNaD () :
             'nash_conv_target':self.nash_conv_target,
             'gradient_norm': self.gradient_norm,
         }
-        torch.save(saved_dict, os.path.join(self.directory, 'logs'))
+        try:
+            torch.save(saved_dict, os.path.join(self.directory, 'logs'))
+        except:
+            logging.error('Exception when saving logs')
 
     def _load_logs (self):
         try:
@@ -216,13 +223,13 @@ class RNaD () :
         except Exception:
             pass
 
-    def _get_delta_m (self) -> tuple[bool, int]:
+    def _get_update_info (self) -> tuple[bool, int]:
         bounding_indices = [_ for _, bound in enumerate(self.delta_m_0) if bound > self.m]
         if not bounding_indices:
             return False, 0
 
         idx = min(bounding_indices)
-        return True, self.delta_m_1[idx]
+        return True, self.delta_m_1[idx], self.buffer_size[idx], self.buffer_mod[idx]
 
     def _nash_conv (self,):
         logging.info('NashConv at m: {}, n: {}, step {}'.format(self.m, self.n, self.total_steps))
@@ -337,10 +344,13 @@ class RNaD () :
         loss_mod=20,
     ) -> None:
 
-        may_resume, delta_m = self._get_delta_m()
+        may_resume, delta_m, buffer_size, buffer_mod = self._get_update_info()
+        buffer = batch.Buffer(buffer_size)
 
         for _ in range(max_updates):
             if not may_resume: return
+
+            buffer.max_size = buffer_size
 
             if self.m % expl_mod == 0 and self.n == 0 and self.m != 0:
                 self._nash_conv()
@@ -352,9 +362,13 @@ class RNaD () :
                 if self.n % checkpoint_mod == 0:
                     self._save_checkpoint()
 
-                episodes = batch.Episodes(self.tree, self.batch_size)
-                episodes.generate(self.net)
-                to_log = self._learn(episodes, alpha)
+                if self.total_steps % buffer_mod == 0: #TODO should not be mod buffer size!
+                    episodes = batch.Episodes(self.tree, self.batch_size)
+                    episodes.generate(self.net)
+                    buffer.append(episodes)
+
+                episodes_sample = buffer.sample(self.batch_size)
+                to_log = self._learn(episodes_sample, alpha)
 
                 self.optimizer.step()
                 self.optimizer.zero_grad()
@@ -382,23 +396,8 @@ class RNaD () :
             self.net_reg.load_state_dict(self.net_target.state_dict())
             
             self._save_logs()
-            may_resume, delta_m = self._get_delta_m()
+            may_resume, delta_m, buffer_size, buffer_mod = self._get_update_info()
             
-    def calc_nash_conv(self, m_values=[]):
-
-        for m in m_values:
-            close = [abs(m - _) < 1 for _ in self.nash_conv_target.keys()]
-            if any(close):
-                data = self.nash_conv_target[m]
-                if isinstance(data, metric.NashConvData):
-                    self.nash_conv_target[m] = (data.max_1 - data.min_2)[1].item()
-                continue
-            net_ = self._new_net()
-            
-            self._load_saved_net(net_, m, 'net_target')
-            data = metric.nash_conv(self.tree, net_)
-            self.nash_conv_target[m] = (data.max_1 - data.min_2)[1].item()
-            self._save_logs() #!!! not outside the loop
 
     def run (
         self,
@@ -427,24 +426,46 @@ class RNaD () :
         ax[3].set_title('NashConv (target)')
         fig.savefig(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', self.directory_name, 'graph.png'))
 
+    def calc_nash_conv(self, m_values=[]):
+        
+        self._load_logs()
+        logging.info('RNaD run {}'.format(self.directory_name))
+        for m in m_values:
+            close = [abs(m - _) < 1 for _ in self.nash_conv_target.keys()]
+            if any(close):
+                logging.info('NashConv for m={}: {}'.format(m, self.nash_conv_target[m]))
+                data = self.nash_conv_target[m]
+                if isinstance(data, metric.NashConvData):
+                    self.nash_conv_target[m] = (data.max_1 - data.min_2)[1].item()
+                continue
+            net_ = self._new_net()
+            
+            self._load_saved_net(net_, m, 'net_target')
+            data = metric.nash_conv(self.tree, net_)
+            self.nash_conv_target[m] = (data.max_1 - data.min_2)[1].item()
+            logging.info('NashConv for m={}: {}'.format(m, self.nash_conv_target[m]))
+            self._save_logs() #!!! not outside the loop
+
 if __name__ == '__main__' :
 
     logging.basicConfig(level=logging.DEBUG)
 
     tree = game.Tree()
     tree.load('depth5')
-    tree.to(torch.device('cuda'))
+    tree.to(torch.device('cpu'))
 
     trial = RNaD(
         tree=tree,
-        directory_name='depth5_exp_delta_m-{}'.format(52959),
-        # directory_name='gamma_1-43714', 
+        # directory_name='depth5_exp_delta_m-{}'.format(int(time.time())),
+        directory_name='depth5_exp_delta_m-39473', 
         # directory_name='gamma_1-{}'.format(int(time.perf_counter())),    
-        device=torch.device('cuda'),
+        device=tree.device,
         eta=.2,
 
         delta_m_0 = [16, 32, 64, 128, 256],
         delta_m_1 = [16, 32, 64, 128, 256],
+        buffer_size= [1, 1, 1, 1, 1],
+        buffer_mod=  [1, 1, 1, 1, 1],
         lr=1*10**-3,
         batch_size=2**9,
         beta=2, # logit clip
@@ -461,9 +482,9 @@ if __name__ == '__main__' :
         vtrace_gamma=1,
     )
 
-    # trial.run(max_updates=2**7 +  1, expl_mod=10**10)
-    trial.calc_nash_conv([16, 32, 48, 64, 96])
+    # trial.run(max_updates=100, expl_mod=10**10)
+    trial.calc_nash_conv([4, 8, 16, 32, 48, 64, 96, 128, 144, 160,])
     # trial.save_graph()
-    print('min expl: {}'.format(
-        min(trial.nash_conv_target.values()))
-    )
+    # print('min expl: {}'.format(
+    #     min(trial.nash_conv_target.values()))
+    # )
