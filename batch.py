@@ -66,7 +66,6 @@ class Episodes () :
         self.states = States(tree, batch_size)
         self.generated = False
         self.generation_time = 0
-        self.transformation_time = 0
         self.estimation_time = 0
 
         self.turns = None
@@ -89,7 +88,6 @@ class Episodes () :
         tree = lst[0].tree
         batch_size = sum(e.batch_size for e in lst)
         assert(all(e.tree == tree for e in lst))
-        print([e.generated for e in lst])
         assert(all(e.generated for e in lst))
         """
         Pad each member of Episodes along time dimension. 0's for padding works for everything.
@@ -101,6 +99,8 @@ class Episodes () :
                 result.__dict__[key] = torch.cat([
                     F.pad(e.__dict__[key].T, (0, t_eff - e.t_eff,)).T
                 for e in lst], dim=1)
+        result.generated = True
+        result.t_eff = t_eff
         return result
 
 
@@ -177,6 +177,7 @@ class Episodes () :
             if torch.is_tensor(value):
                 result.__dict__[key] = torch.index_select(self.__dict__[key], dim=1, index=selected)
         result.generated = True
+        result.t_eff = self.t_eff
         return result
 
 class Buffer:
@@ -192,7 +193,7 @@ class Buffer:
 
     def append (self, episodes: Episodes):
         self.episodes_buffer.append(episodes)
-        if len(self.episodes_buffer) > self.max_size:
+        while len(self.episodes_buffer) > self.max_size:
            self.episodes_buffer.popleft()
 
     def clear (self,):
