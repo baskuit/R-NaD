@@ -6,7 +6,8 @@ from game import Tree
 from collections import deque
 
 import time
-
+import random
+import numpy
 
 class States () :
 
@@ -63,6 +64,7 @@ class Episodes () :
         self.tree = tree
         self.batch_size = batch_size
         self.states = States(tree, batch_size)
+        self.generated = False
         self.generation_time = 0
         self.transformation_time = 0
         self.estimation_time = 0
@@ -80,12 +82,34 @@ class Episodes () :
         self.q_estimates = None
         self.v_estimates = None
 
+    @classmethod
+    def collate(cls, lst:list["Episodes"]):
+
+        t_eff = max(e.t_eff for e in lst)
+        tree = lst[0].tree
+        batch_size = sum(e.batch_size for e in lst)
+        assert(all(e.tree == tree for e in lst))
+        print([e.generated for e in lst])
+        assert(all(e.generated for e in lst))
+        """
+        Pad each member of Episodes along time dimension. 0's for padding works for everything.
+        valid is determined by indices==0, thus other padded tensors aren't used  
+        """
+        result = Episodes(tree, batch_size)
+        for key, value in lst[0].__dict__.items():
+            if torch.is_tensor(value):
+                result.__dict__[key] = torch.cat([
+                    F.pad(e.__dict__[key].T, (0, t_eff - e.t_eff,)).T
+                for e in lst], dim=1)
+        return result
+
+
     def generate (self, net : torch.nn.Module) :
         """
         Play a batch of episodes with a given actor net
         """
         values_list = []
-        indices_list = []
+        indices_list = [] # this is essentially 'valid'
         turns_list = []
         observations_list = []
         policy_list = []
@@ -132,9 +156,9 @@ class Episodes () :
         self.masks = torch.stack(masks_list, dim=0)
         self.q_estimates = torch.zeros_like(self.policy)
         self.v_estimates = torch.zeros_like(self.rewards)
-
+        self.generated = True
         net.train()
-    
+
     def display (self,):
         print('Episode params:')
         for key, value in self.__dict__.items():
@@ -143,9 +167,49 @@ class Episodes () :
                     value = value.shape
             print(key, value)
 
+    def sample (self, batch_size):
+        assert(self.generated)
+        batch_size = min(batch_size, self.batch_size)
+        selected = random.sample(range(self.batch_size), batch_size)
+        selected = torch.tensor(selected, dtype=torch.long, device=self.tree.device)
+        result = Episodes(self.tree, batch_size)
+        for key, value in self.__dict__.items():
+            if torch.is_tensor(value):
+                result.__dict__[key] = torch.index_select(self.__dict__[key], dim=1, index=selected)
+        result.generated = True
+        return result
+
 class Buffer:
 
-    def __init__(self, size) -> None:
-        self.size = size #num of episodes/batches
-        self.episodes = deque(maxlen=size)
+    def __init__(self, max_size,) -> None:
+        self.max_size = max_size #num of episodes/batches
+        self.episodes_buffer = deque(maxlen=max_size)
 
+    def sample (self, batch_size):
+        n = len(self.episodes_buffer)
+        bucket_sizes = numpy.random.multinomial(batch_size, [1/n] * n)
+        return Episodes.collate([self.episodes_buffer[_].sample(bucket_sizes[_]) for _ in range(len(self.episodes_buffer))])
+
+    def append (self, episodes: Episodes):
+        self.episodes_buffer.append(episodes)
+        if len(self.episodes_buffer) > self.max_size:
+           self.episodes_buffer.popleft()
+
+    def clear (self,):
+        self.episodes_buffer.clear()
+
+if __name__ == '__main__':
+    import game
+    import net
+    tree = game.Tree()
+    tree.load('recent')
+    net_ = net.MLP(size=tree.max_actions, width=1)
+    buffer = Buffer(8,)
+
+    for _ in range(10):
+        episodes = Episodes(tree, 2)
+        episodes.generate(net_)
+        buffer.append(episodes)
+
+    episodes_ = buffer.sample(10)
+    episodes_.display()
