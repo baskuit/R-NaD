@@ -43,6 +43,8 @@ class RNaD () :
         directory_name=None,
         net_params=None,
         vtrace_gamma=1,
+        same_init_net=False,
+        fixed=True,
     ):
 
         self.tree = tree
@@ -67,7 +69,6 @@ class RNaD () :
         self.epsilon_threshold = epsilon_threshold
         self.n_discrete = n_discrete
         self.vtrace_gamma = vtrace_gamma
-        
 
         if directory_name is None:
             directory_name = str(int(time.perf_counter()))
@@ -76,6 +77,8 @@ class RNaD () :
         if net_params is None:
             net_params = {'type':'ConvNet','size':self.tree.max_actions,'depth':2,'channels':2**5,'batch_norm':False,'device':self.device}
         self.net_params = net_params
+        self.fixed = fixed
+
 
         #### #### #### ####
         self.saved_keys = [key for key in self.__dict__.keys() if key != 'tree']
@@ -84,6 +87,7 @@ class RNaD () :
         if not os.path.exists(saved_runs_dir):
             os.mkdir(saved_runs_dir)        
         self.directory = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', directory_name)   
+        self.same_init_net = same_init_net
 
         self.m = 0
         self.n = 0
@@ -101,7 +105,7 @@ class RNaD () :
         self.nash_conv_target = {}
         self.gradient_norm = {}
 
-    def _new_net (self) -> nn.Module:
+    def _new_net (self,) -> nn.Module:
         if self.net_params['type'] == 'ConvNet':
             t = net.ConvNet
         if self.net_params['type'] == 'MLP':
@@ -126,6 +130,11 @@ class RNaD () :
 
             os.mkdir(os.path.join(self.directory, '0'))
             self.net = self._new_net()
+            if self.same_init_net:
+                net_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', self.same_init_net, '0', '0')
+                checkpoint = torch.load(net_dir)
+                self.net.load_state_dict(checkpoint['net'])
+                logging.info('Loading init net from {}'.format(self.same_init_net))
             self.net_target = self._new_net()
             self.net_target.load_state_dict(self.net.state_dict())
             self.net_reg = self._new_net()
@@ -210,23 +219,17 @@ class RNaD () :
             'nash_conv_target':self.nash_conv_target,
             'gradient_norm': self.gradient_norm,
         }
-        try:
-            torch.save(saved_dict, os.path.join(self.directory, 'logs'))
-        except:
-            logging.error('Exception when saving logs')
+        torch.save(saved_dict, os.path.join(self.directory, 'logs'))
 
     def _load_logs (self):
-        try:
-            saved_dict = torch.load(os.path.join(self.directory, 'logs'))
-            for key, value in saved_dict.items():
-                self.__dict__[key] = value
-        except Exception:
-            pass
+        saved_dict = torch.load(os.path.join(self.directory, 'logs'))
+        for key, value in saved_dict.items():
+            self.__dict__[key] = value
 
     def _get_update_info (self) -> tuple[bool, int]:
         bounding_indices = [_ for _, bound in enumerate(self.delta_m_0) if bound > self.m]
         if not bounding_indices:
-            return False, 0
+            return False, 0, 1, 1
 
         idx = min(bounding_indices)
         return True, self.delta_m_1[idx], self.buffer_size[idx], self.buffer_mod[idx]
@@ -274,7 +277,7 @@ class RNaD () :
 
                 for player in range(2):
                     reward = rewards[player, :, :]
-                    v_target, has_played, policy_target_ = vtrace.v_trace(
+                    v_target_, has_played, policy_target_ = vtrace.v_trace(
                         v_target,
                         valid,
                         player_id,
@@ -291,10 +294,11 @@ class RNaD () :
                         eta=self.eta,
                         gamma=self.vtrace_gamma,
                     )
-                    v_target_list.append(v_target)
+                    if not self.fixed:
+                        v_target = v_target_
+                    v_target_list.append(v_target_)
                     has_played_list.append(has_played)
                     v_trace_policy_target_list.append(policy_target_)
-
             loss_v = vtrace.get_loss_v([v] * 2, v_target_list, has_played_list)
 
             is_vector = torch.unsqueeze(torch.ones_like(valid), dim=-1)
@@ -350,6 +354,8 @@ class RNaD () :
         for _ in range(max_updates):
             if not may_resume: return
 
+            logging.info('m: {}, delta_m: {}'.format(self.m, delta_m))
+
             buffer.max_size = buffer_size
 
             if self.m % expl_mod == 0 and self.n == 0 and self.m != 0:
@@ -362,9 +368,9 @@ class RNaD () :
                 if self.n % checkpoint_mod == 0:
                     self._save_checkpoint()
 
-                if self.total_steps % buffer_mod == 0: #TODO should not be mod buffer size!
+                if self.total_steps % buffer_mod == 0:
                     episodes = batch.Episodes(self.tree, self.batch_size)
-                    episodes.generate(self.net)
+                    episodes.generate(self.net_reg)
                     buffer.append(episodes)
 
                 episodes_sample = buffer.sample(self.batch_size)
@@ -384,7 +390,6 @@ class RNaD () :
                     self.loss_value[self.total_steps] = to_log['loss_v']
                     self.loss_neurd[self.total_steps] = to_log['loss_nerd']
                     self.gradient_norm[self.total_steps] = to_log['gradient_norm']
-                    print(self.total_steps, to_log['gradient_norm'])
 
                 self.n += 1
                 self.total_steps += 1
@@ -409,64 +414,50 @@ class RNaD () :
         self._initialize()
         self._resume(max_updates=max_updates,checkpoint_mod=checkpoint_mod,expl_mod=expl_mod,loss_mod=loss_mod)
 
-    def save_graph(self):
-
-        fig, ax = pyplot.subplots(4)
-        ax[0].plot(list(self.loss_value.keys()), list(self.loss_value.values()))
-        ax[1].plot(list(self.loss_neurd.keys()), list(self.loss_neurd.values()))
-        ax[2].plot(list(self.nash_conv.keys()), list(self.nash_conv.values()))
-        ax[3].plot(list(self.nash_conv_target.keys()), list(self.nash_conv_target.values()))
-        ax[0].set_ylim(0, 2)
-        ax[0].set_title('value loss')
-        ax[1].set_ylim(-2, 2)
-        ax[1].set_title('neurd loss')
-        ax[2].set_ylim(0, 2)
-        ax[2].set_title('NashConv')
-        ax[3].set_ylim(0, 2)
-        ax[3].set_title('NashConv (target)')
-        fig.savefig(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', self.directory_name, 'graph.png'))
-
     def calc_nash_conv(self, m_values=[]):
         
         self._load_logs()
         logging.info('RNaD run {}'.format(self.directory_name))
         for m in m_values:
-            close = [abs(m - _) < 1 for _ in self.nash_conv_target.keys()]
+            close = [abs(m - m_) < 1 for m_ in self.nash_conv_target.keys()]
             if any(close):
-                logging.info('NashConv for m={}: {}'.format(m, self.nash_conv_target[m]))
                 data = self.nash_conv_target[m]
-                if isinstance(data, metric.NashConvData):
-                    self.nash_conv_target[m] = (data.max_1 - data.min_2)[1].item()
                 continue
             net_ = self._new_net()
-            
             self._load_saved_net(net_, m, 'net_target')
             data = metric.nash_conv(self.tree, net_)
             self.nash_conv_target[m] = (data.max_1 - data.min_2)[1].item()
             logging.info('NashConv for m={}: {}'.format(m, self.nash_conv_target[m]))
             self._save_logs() #!!! not outside the loop
 
+    def tag(self) -> str:
+        return 'name: {}, eta: {}, lr: {}, batch_size: {}, gamma_avg: {}'.format(
+            self.directory_name, self.eta, self.lr, self.batch_size, self.gamma_averaging
+        )
+
 if __name__ == '__main__' :
 
     logging.basicConfig(level=logging.DEBUG)
 
     tree = game.Tree()
-    tree.load('depth5')
-    tree.to(torch.device('cpu'))
+    tree.load('recent')
+    tree.to(torch.device('cuda'))
 
     trial = RNaD(
         tree=tree,
-        # directory_name='depth5_exp_delta_m-{}'.format(int(time.time())),
-        directory_name='depth5_exp_delta_m-39473', 
-        # directory_name='gamma_1-{}'.format(int(time.perf_counter())),    
+        # directory_name='test_fixed_{}'.format(int(time.time())), 
+        directory_name='test_fixed_6', 
         device=tree.device,
         eta=.2,
-
-        delta_m_0 = [16, 32, 64, 128, 256],
-        delta_m_1 = [16, 32, 64, 128, 256],
-        buffer_size= [1, 1, 1, 1, 1],
-        buffer_mod=  [1, 1, 1, 1, 1],
-        lr=1*10**-3,
+        # delta_m_0 = [16, 32, 64, 128, 256],
+        # delta_m_1 = [16, 32, 64, 128, 256],
+        # buffer_size= [1, 1, 1, 1, 1],
+        # buffer_mod=  [1, 1, 1, 1, 1],
+        delta_m_0 = [128,],
+        delta_m_1 = [100,],
+        buffer_size= [1,],
+        buffer_mod=  [1,],
+        lr=1*10**-4,
         batch_size=2**9,
         beta=2, # logit clip
         neurd_clip=10**4, # Q value clip
@@ -476,15 +467,9 @@ if __name__ == '__main__' :
         b1_adam=0,
         b2_adam=.999,
         epsilon_adam=10**-8,
-        gamma_averaging=.01,
+        gamma_averaging=.001,
         roh_bar=1,
         c_bar=1,
         vtrace_gamma=1,
+        same_init_net='test_fixed_5'
     )
-
-    # trial.run(max_updates=100, expl_mod=10**10)
-    trial.calc_nash_conv([4, 8, 16, 32, 48, 64, 96, 128, 144, 160,])
-    # trial.save_graph()
-    # print('min expl: {}'.format(
-    #     min(trial.nash_conv_target.values()))
-    # )
