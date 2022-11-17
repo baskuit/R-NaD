@@ -92,10 +92,10 @@ class RNaD () :
         self.m = 0
         self.n = 0
         self.total_steps = 0 #saved in checkpoint
-        self.net: net.ConvNet = None
-        self.net_target: net.ConvNet = None
-        self.net_reg: net.ConvNet = None
-        self.net_reg_: net.ConvNet = None
+        self.params = None
+        self.params_target = None
+        self.params_reg = None
+        self.params_reg_ = None
 
         self.alpha_lambda = lambda n, delta_m: 1 if n > delta_m / 2 else n * 2 / delta_m
 
@@ -129,19 +129,19 @@ class RNaD () :
             torch.save(params_dict,  os.path.join(self.directory, 'params'))
 
             os.mkdir(os.path.join(self.directory, '0'))
-            self.net = self._new_net()
+            self.params = self._new_net()
             if self.same_init_net:
                 net_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', self.same_init_net, '0', '0')
                 checkpoint = torch.load(net_dir)
-                self.net.load_state_dict(checkpoint['net'])
+                self.params.load_state_dict(checkpoint['net'])
                 logging.info('Loading init net from {}'.format(self.same_init_net))
-            self.net_target = self._new_net()
-            self.net_target.load_state_dict(self.net.state_dict())
-            self.net_reg = self._new_net()
-            self.net_reg.load_state_dict(self.net.state_dict())
-            self.net_reg_ = self._new_net()
-            self.net_reg_.load_state_dict(self.net.state_dict())
-            self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
+            self.params_target = self._new_net().state_dict()
+            self.params_target.load_state_dict(self.params.state_dict())
+            self.params_reg = self._new_net()
+            self.params_reg.load_state_dict(self.params.state_dict())
+            self.params_reg_ = self._new_net()
+            self.params_reg_.load_state_dict(self.params.state_dict())
+            self.optimizer = torch.optim.Adam(self.params.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
             self.m = 0
             self.n = 0
             self._save_checkpoint()
@@ -173,25 +173,25 @@ class RNaD () :
         saved_dict = torch.load(os.path.join(self.directory, str(m), str(n)))
         self.total_steps = saved_dict['total_steps']
         self.net_params = saved_dict['net_params']
-        self.net = self._new_net()
-        self.net.load_state_dict(saved_dict['net'])
-        self.net_target = self._new_net()
-        self.net_target.load_state_dict(saved_dict['net_target'])
-        self.net_reg = self._new_net()
-        self.net_reg.load_state_dict(saved_dict['net_reg'])
-        self.net_reg_ = self._new_net()
-        self.net_reg_.load_state_dict(saved_dict['net_reg_'])
-        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
+        self.params = self._new_net()
+        self.params.load_state_dict(saved_dict['net'])
+        self.params_target = self._new_net()
+        self.params_target.load_state_dict(saved_dict['net_target'])
+        self.params_reg = self._new_net()
+        self.params_reg.load_state_dict(saved_dict['net_reg'])
+        self.params_reg_ = self._new_net()
+        self.params_reg_.load_state_dict(saved_dict['net_reg_'])
+        self.optimizer = torch.optim.Adam(self.params.parameters(), lr=self.lr, betas=[self.b1_adam, self.b2_adam], eps=self.epsilon_adam)
         self.optimizer.load_state_dict(saved_dict['optimizer'])
 
     def _save_checkpoint (self):
         saved_dict = {
             'total_steps':self.total_steps,
             'net_params':self.net_params,
-            'net':self.net.state_dict(),
-            'net_target':self.net_target.state_dict(),
-            'net_reg':self.net_reg.state_dict(),
-            'net_reg_':self.net_reg_.state_dict(),
+            'net':self.params.state_dict(),
+            'net_target':self.params_target.state_dict(),
+            'net_reg':self.params_reg.state_dict(),
+            'net_reg_':self.params_reg_.state_dict(),
             'optimizer':self.optimizer.state_dict(),
         }
         if not os.path.exists(os.path.join(self.directory, str(self.m))):
@@ -205,7 +205,7 @@ class RNaD () :
         # m is the step you are loading it from
         # use m-1 to get net_reg_...
         if m is None:
-            net.load_state_dict(self.net.state_dict())
+            net.load_state_dict(self.params.state_dict())
             return
         m = max(m, 0)
         saved_dict = torch.load(os.path.join(self.directory, str(m), '0'))
@@ -242,7 +242,7 @@ class RNaD () :
         # for depth, nash_conv in mean_nash_conv.items():
         #     logging.info('depth:{}, nash_conv:{}'.format(depth, nash_conv))
         logging.info('\nnet target')
-        nash_conv_data_target = metric.nash_conv(self.tree, self.net_target)
+        nash_conv_data_target = metric.nash_conv(self.tree, self.params_target)
         mean_nash_conv_target = metric.mean_nash_conv_by_depth(nash_conv_data_target)
         for depth, nash_conv in mean_nash_conv_target.items():
             logging.info('depth:{}, nash_conv:{}'.format(depth, nash_conv))
@@ -262,15 +262,15 @@ class RNaD () :
             valid = (episodes.indices != 0).to(torch.float)
             T = valid.shape[0]
 
-            logit, log_pi, pi, v = self.net.forward_batch(episodes)
+            logit, log_pi, pi, v = self.params.forward_batch(episodes)
             pi_processed = pi
             # pi_processed = vtrace.process_policy(pi, episodes.masks, self.n_discrete, self.epsilon_threshold) # TODO this function seems to filter masks too? ofc duh
             v_target_list, has_played_list, v_trace_policy_target_list = [], [], []
 
             with torch.no_grad():
-                _, _, _, v_target = self.net_target.forward_batch(episodes)
-                _, log_pi_reg, _, _ = self.net_reg.forward_batch(episodes)
-                _, log_pi_reg_, _, _ = self.net_reg_.forward_batch(episodes)
+                _, _, _, v_target = self.params_target.forward_batch(episodes)
+                _, log_pi_reg, _, _ = self.params_reg.forward_batch(episodes)
+                _, log_pi_reg_, _, _ = self.params_reg_.forward_batch(episodes)
 
 
                 log_policy_reg = log_pi - (alpha * log_pi_reg + (1 - alpha) * log_pi_reg_)
@@ -319,12 +319,12 @@ class RNaD () :
             loss = loss_v + loss_nerd
             loss.backward()
 
-            nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip)
+            nn.utils.clip_grad_norm_(self.params.parameters(), self.grad_clip)
 
             avg_traj_len = valid.sum(0).mean(-1)
 
             total_norm = 0
-            for p in self.net.parameters():
+            for p in self.params.parameters():
                 param_norm = p.grad.detach().data.norm(2)
                 total_norm += param_norm.item() ** 2
             total_norm = total_norm ** 0.5
@@ -370,7 +370,7 @@ class RNaD () :
 
                 if self.total_steps % buffer_mod == 0:
                     episodes = batch.Episodes(self.tree, self.batch_size)
-                    episodes.generate(self.net_reg)
+                    episodes.generate(self.params_reg)
                     buffer.append(episodes)
 
                 episodes_sample = buffer.sample(self.batch_size)
@@ -378,13 +378,13 @@ class RNaD () :
 
                 self.optimizer.step()
                 self.optimizer.zero_grad()
-                params1 = self.net.state_dict()
-                params2 = self.net_target.state_dict()
+                params1 = self.params.state_dict()
+                params2 = self.params_target.state_dict()
                 for name1, param1 in params1.items():
                     params2[name1].data.copy_(
                         self.gamma_averaging * param1.data + (1-self.gamma_averaging)*params2[name1].data
                     )
-                self.net_target.load_state_dict(params2)
+                self.params_target.load_state_dict(params2)
 
                 if self.total_steps % loss_mod == 0:
                     self.loss_value[self.total_steps] = to_log['loss_v']
@@ -397,8 +397,8 @@ class RNaD () :
 
             self.n = 0
             self.m += 1
-            self.net_reg_.load_state_dict(self.net_reg.state_dict())
-            self.net_reg.load_state_dict(self.net_target.state_dict())
+            self.params_reg_.load_state_dict(self.params_reg.state_dict())
+            self.params_reg.load_state_dict(self.params_target.state_dict())
             
             self._save_logs()
             may_resume, delta_m, buffer_size, buffer_mod = self._get_update_info()
@@ -473,3 +473,5 @@ if __name__ == '__main__' :
         vtrace_gamma=1,
         same_init_net='test_fixed_5'
     )
+
+    trial.run(max_updates=128)
