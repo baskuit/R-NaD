@@ -82,12 +82,12 @@ class CrossConv (nn.Module) :
 
 class ConvResBlock (nn.Module):
 
-    def __init__ (self, size, channels, batch_norm=True, device=torch.device('cpu:0'), dtype=torch.float) :
+    def __init__ (self, size, channels, batch_norm=False, device=torch.device('cpu:0'), dtype=torch.float) :
         super().__init__()
         self.conv0 = CrossConv(size, channels, channels, device=device, dtype=dtype)
         self.conv1 = CrossConv(size, channels, channels, device=device, dtype=dtype)
         self.relu = torch.relu
-        if batch_norm > 0:
+        if batch_norm:
             self.batch_norm0 = nn.BatchNorm2d(channels, device=device, dtype=dtype)
             self.batch_norm1 = nn.BatchNorm2d(channels, device=device, dtype=dtype)
         else:
