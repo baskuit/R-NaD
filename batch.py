@@ -189,6 +189,7 @@ class Buffer:
     def sample (self, batch_size):
         n = len(self.episodes_buffer)
         bucket_sizes = numpy.random.multinomial(batch_size, [1/n] * n)
+        assert(sum(bucket_sizes) == batch_size)
         return Episodes.collate([self.episodes_buffer[_].sample(bucket_sizes[_]) for _ in range(len(self.episodes_buffer))])
 
     def append (self, episodes: Episodes):

@@ -304,13 +304,13 @@ if __name__ == '__main__' :
         row_actions=2,
         col_actions=2,
         # depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 1 * (random.random() < .7),
-        depth_bound=4,
+        depth_bound=3,
         # desc='3x3 but 2x2 at root'
     )
     
     tree._generate()
     print(tree.hash)
     print(tree.size)
-    # tree.save('depth4')
+    tree.save('depth3')
 
     print(tree.expected_value[1])

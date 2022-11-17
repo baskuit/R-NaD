@@ -5,7 +5,18 @@ import matplotlib.pyplot as pyplot
 """
 Rudimentary script for looking at the saved logs from a RNaD run
 """
-d = 'depth5_exp_delta_m-52959'
+d = 'test_fixed_5'
+e = 'test_broken_5'
+
+def sort_dict (dict) -> list[tuple]:
+
+    x = [(key, value) for key, value in dict.items()]
+    x = sorted(x, key=lambda _:_[0])
+    y = [_[0] for _ in x]
+    z = [_[1] for _ in x]
+
+    return y, z
+
 def load_stuff(directory_name):
     dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', directory_name, 'params')
     params_dict = torch.load(dir)
@@ -19,26 +30,13 @@ def multiple_on_one_graph(directory_name_list, colors=['r', 'b', 'g']):
     for idx ,directory_name in enumerate(directory_name_list):
         params_dict, logs_dict = load_stuff(directory_name)
         nash_conv_target = logs_dict['nash_conv_target']
+        print(nash_conv_target)
         for _, __ in nash_conv_target.items():
             print(_, __)
-        pyplot.plot(list(nash_conv_target.keys()), list(nash_conv_target.values()), color=colors[idx])
-    # pyplot.xlim(0, 4000)
+        y, z = sort_dict(nash_conv_target)
+        pyplot.plot(y, z, color=colors[idx])
     pyplot.ylim(0, 2)
-
-    # fig, ax = pyplot.subplots(4)
-    # ax[0].plot(list(loss_value.keys()), list(loss_value.values()))
-    # ax[1].plot(list(loss_neurd.keys()), list(loss_neurd.values()))
-    # ax[2].plot(list(nash_conv.keys()), list(nash_conv.values()))
-    # ax[3].plot(list(nash_conv_target.keys()), list(nash_conv_target.values()))
-    # ax[0].set_ylim(0, 2)
-    # ax[0].set_title('value loss')
-    # ax[1].set_ylim(-2, 2)
-    # ax[1].set_title('neurd loss')
-    # ax[2].set_ylim(0, 2)
-    # ax[2].set_title('NashConv')
-    # ax[3].set_ylim(0, 2)
-    # ax[3].set_title('NashConv (target)')
     pyplot.show()
 
 
-multiple_on_one_graph([d])
+multiple_on_one_graph([d, e])
