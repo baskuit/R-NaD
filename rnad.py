@@ -24,8 +24,8 @@ class RNaD () :
         eta=.2,
         bounds = [100, 165, 200,],
         delta_m = [10_000, 100_000, 35_000,],
-        buffer_size = [1, 1, 1], # This simulates no buffer
-        buffer_mod = [1, 1, 1], # How many steps to grab new batch
+        buffer_size = 1, # This simulates no buffer
+        buffer_mod = 1, # How many steps to grab new batch
         lr=5*10**-5,
         beta=2,
         neurd_clip=10**3,
@@ -217,10 +217,10 @@ class RNaD () :
     def _get_update_info (self) -> tuple[bool, int]:
         bounding_indices = [_ for _, bound in enumerate(self.bounds) if bound > self.m]
         if not bounding_indices:
-            return False, 0, 1, 1
+            return False, 0
 
         idx = min(bounding_indices)
-        return True, self.delta_m[idx], self.buffer_size[idx], self.buffer_mod[idx]
+        return True, self.delta_m[idx]
 
     def _nash_conv (self,):
         logging.info('NashConv at m: {}, n: {}, step {}'.format(self.m, self.n, self.total_steps))
@@ -338,16 +338,16 @@ class RNaD () :
     ) -> None:
 
         
-        buffer = batch.Buffer(buffer_size)
+        buffer = batch.Buffer(self.buffer_size)
 
         for _ in range(max_updates):
-            may_resume, delta_m, buffer_size, buffer_mod = self._get_update_info()
+            may_resume, delta_m = self._get_update_info()
             log = {}
             if not may_resume: return
 
             logging.info('m: {}, delta_m: {}'.format(self.m, delta_m))
 
-            buffer.max_size = buffer_size
+            buffer.max_size = self.buffer_size
 
             if self.m % expl_mod == 0 and self.n == 0 and self.m != 0:
                 nash_conv = self._nash_conv()
@@ -424,9 +424,9 @@ if __name__ == '__main__' :
         # buffer_size= [1, 1, 1, 1, 1],
         # buffer_mod=  [1, 1, 1, 1, 1],
         bounds = [128,],
-        delta_m = [100,],
-        buffer_size= [1,],
-        buffer_mod=  [1,],
+        delta_m = [300,],
+        buffer_size= 1,
+        buffer_mod=  1,
         lr=5*10**-5,
         batch_size=2**7,
         beta=2, # logit clip
@@ -442,4 +442,9 @@ if __name__ == '__main__' :
         c_bar=1,
         vtrace_gamma=1,
         # same_init_net='test_fixed_5'
+    )
+    
+    trial.run(
+        log_mod=1,
+        expl_mod=10000,
     )
