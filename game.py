@@ -23,44 +23,50 @@ This file contains:
 
 """
 
-class Tree () :
 
-    def __init__ (self,
-        is_root=True, # so terminal state is prepended during generation
-        device=torch.device('cpu'),
+class Tree:
+    def __init__(
+        self,
+        is_root=True,  # so terminal state is prepended during generation
+        device=torch.device("cpu"),
         max_actions=3,
         max_transitions=1,
         row_actions=None,
         col_actions=None,
-        depth_bound=1, # upper bound on longest path from root, and a strict bound when longest path =0
+        depth_bound=1,  # upper bound on longest path from root, and a strict bound when longest path =0
         transition_threshold=0,
         terminal_values=[-1, 1],
         row_actions_lambda=None,
         col_actions_lambda=None,
         depth_bound_lambda=None,
-        desc=''):
-    
-        if row_actions_lambda is None:
-            row_actions_lambda = lambda tree : tree.row_actions - 0
-        if col_actions_lambda is None:
-            col_actions_lambda = lambda tree : tree.col_actions - 0
-        if depth_bound_lambda is None:
-            depth_bound_lambda = lambda tree : tree.depth_bound - 1
+        desc="",
+    ):
 
-        if row_actions is None: row_actions = max_actions
-        if col_actions is None: col_actions = max_actions
+        if row_actions_lambda is None:
+            row_actions_lambda = lambda tree: tree.row_actions - 0
+        if col_actions_lambda is None:
+            col_actions_lambda = lambda tree: tree.col_actions - 0
+        if depth_bound_lambda is None:
+            depth_bound_lambda = lambda tree: tree.depth_bound - 1
+
+        if row_actions is None:
+            row_actions = max_actions
+        if col_actions is None:
+            col_actions = max_actions
 
         self.generated = False
-        self.is_root=is_root
-        self.device=device
-        self.max_actions=max_actions
-        self.max_transitions=max_transitions
-        self.row_actions=row_actions
-        self.col_actions=col_actions
-        self.depth_bound=depth_bound
-        self.transition_threshold=transition_threshold
-        self.terminal_values=terminal_values
-        self.directory = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_trees')
+        self.is_root = is_root
+        self.device = device
+        self.max_actions = max_actions
+        self.max_transitions = max_transitions
+        self.row_actions = row_actions
+        self.col_actions = col_actions
+        self.depth_bound = depth_bound
+        self.transition_threshold = transition_threshold
+        self.terminal_values = terminal_values
+        self.directory = os.path.join(
+            os.path.dirname(os.path.realpath(__file__)), "saved_trees"
+        )
 
         value_shape = (1, max_transitions, max_actions, max_actions)
         legal_shape = (1, 1, max_actions, max_actions)
@@ -68,22 +74,24 @@ class Tree () :
         self.value = torch.zeros(value_shape, device=device, dtype=torch.float)
         self.expected_value = torch.zeros(legal_shape, device=device, dtype=torch.float)
         self.legal = torch.zeros(legal_shape, device=device, dtype=torch.float)
-        self.legal[0, 0, :self.row_actions, :self.col_actions] = 1.
-        self.chance = self._transition_probs(max_actions, max_actions, max_transitions, transition_threshold)
+        self.legal[0, 0, : self.row_actions, : self.col_actions] = 1.0
+        self.chance = self._transition_probs(
+            max_actions, max_actions, max_transitions, transition_threshold
+        )
         self.index = torch.zeros(value_shape, device=device, dtype=torch.long)
         self.payoff = torch.zeros((1, 1), device=device, dtype=torch.float)
         self.nash = torch.zeros(nash_shape, device=device, dtype=torch.float)
-        self.desc=desc
-        self.hash=torch.randint(-2**63, 2**63-1, size=(1,), device=device)
-        self.size=0
+        self.desc = desc
+        self.hash = torch.randint(-(2**63), 2**63 - 1, size=(1,), device=device)
+        self.size = 0
         ####
         self.saved_keys = [key for key in self.__dict__.keys()]
         ####
-        self.row_actions_lambda=row_actions_lambda
-        self.col_actions_lambda=col_actions_lambda
-        self.depth_bound_lambda=depth_bound_lambda
+        self.row_actions_lambda = row_actions_lambda
+        self.col_actions_lambda = col_actions_lambda
+        self.depth_bound_lambda = depth_bound_lambda
 
-    def _child (self):
+    def _child(self):
         child = Tree(
             is_root=False,
             device=self.device,
@@ -100,17 +108,23 @@ class Tree () :
         )
         return child
 
-    def _transition_probs (self, rows, cols, n_trans, transition_threshold) :
+    def _transition_probs(self, rows, cols, n_trans, transition_threshold):
         """
         Generates a random transition probabilty tensor. (It does not respect legality of moves, it is masked later)
         """
-        probs = torch.from_numpy(np.random.dirichlet((1/n_trans,)*n_trans, (1,rows,cols))).to(self.device).to(torch.float)
+        probs = (
+            torch.from_numpy(
+                np.random.dirichlet((1 / n_trans,) * n_trans, (1, rows, cols))
+            )
+            .to(self.device)
+            .to(torch.float)
+        )
         probs = probs - torch.where(probs < transition_threshold, probs, 0)
         probs = torch.nn.functional.normalize(probs, p=1, dim=3)
         probs = probs.movedim(3, 1)
         return probs
 
-    def _assert_index_is_tree (self):
+    def _assert_index_is_tree(self):
         """
         The index tensor describes a tree if and only if it is increasing
         (The non-zero values in the index[idx] are all > idx)
@@ -119,16 +133,15 @@ class Tree () :
         indices = self.index[self.index != 0]
         indices = indices.tolist()
         indices.sort()
-        all_possible_indices = list(range(1 + self.is_root, 2 + len(indices))) #
-        assert(indices == all_possible_indices)
+        all_possible_indices = list(range(1 + self.is_root, 2 + len(indices)))  #
+        assert indices == all_possible_indices
         for idx, index_slice in enumerate(self.index[1:]):
             greater_than_idx = index_slice > idx
             is_zero = index_slice == 0
             is_valid = torch.logical_or(greater_than_idx, is_zero)
-            assert(torch.all(is_valid))
+            assert torch.all(is_valid)
 
-
-    def _solve (self, M : torch.Tensor, max_actions=2) :
+    def _solve(self, M: torch.Tensor, max_actions=2):
         """
         M : tensor of shape (rows, cols)
         max_actions : dim=0 of output is padded to 2 * max_actions
@@ -136,22 +149,32 @@ class Tree () :
         """
         rows, cols = M.shape[:2]
         N = np.zeros((rows, cols), dtype=pygambit.Decimal)
-        for _ in range(rows) :
-            for __ in range(cols) :
+        for _ in range(rows):
+            for __ in range(cols):
                 N[_][__] = pygambit.Decimal(M[_][__].item())
 
         g = pygambit.Game.from_arrays(N, -N)
         # TODO fix names here
-        solutions = [[S[_] if _ < rows else 0 for _ in range(max_actions)] + [S[rows+_] if _ < cols else 0 for _ in range(max_actions)] for S in pygambit.nash.enummixed_solve(g, rational=False)]
+        solutions = [
+            [S[_] if _ < rows else 0 for _ in range(max_actions)]
+            + [S[rows + _] if _ < cols else 0 for _ in range(max_actions)]
+            for S in pygambit.nash.enummixed_solve(g, rational=False)
+        ]
         if not solutions:
-            solutions = [[S[_] if _ < rows else 0 for _ in range(max_actions)] + [S[rows+_] if _ < cols else 0 for _ in range(max_actions)] for S in pygambit.nash.lcp_solve(g, rational=False)]
-        purity = lambda solution : -int(1 in solution[:max_actions])  -int(1 in solution[max_actions:])
+            solutions = [
+                [S[_] if _ < rows else 0 for _ in range(max_actions)]
+                + [S[rows + _] if _ < cols else 0 for _ in range(max_actions)]
+                for S in pygambit.nash.lcp_solve(g, rational=False)
+            ]
+        purity = lambda solution: -int(1 in solution[:max_actions]) - int(
+            1 in solution[max_actions:]
+        )
         solutions.sort(key=purity)
         return torch.tensor(solutions, dtype=torch.float).to(self.device)
 
-    def _generate (self):
-        child_list : list[Tree] = []
-        lengths : list[int] = []
+    def _generate(self):
+        child_list: list[Tree] = []
+        lengths: list[int] = []
 
         for row in range(self.row_actions):
             for col in range(self.col_actions):
@@ -162,7 +185,10 @@ class Tree () :
                     if transition_prob > 0:
                         child = self._child()
 
-                        if child.depth_bound > 0 and child.row_actions * child.col_actions > 0:
+                        if (
+                            child.depth_bound > 0
+                            and child.row_actions * child.col_actions > 0
+                        ):
                             child._generate()
                             self.hash = torch.bitwise_xor(self.hash, child.hash)
                             child_list.append(child)
@@ -172,27 +198,33 @@ class Tree () :
 
                         else:
                             lengths.append(0)
-                            child_payoff = torch.tensor(((random.choice(self.terminal_values),),)).to(self.device)
-                        
+                            child_payoff = torch.tensor(
+                                ((random.choice(self.terminal_values),),)
+                            ).to(self.device)
+
                         self.value[0, chance, row, col] = child_payoff.item()
-                self.expected_value[0, 0, row, col] = torch.sum(self.value[0, :, row, col] * self.chance[0, :, row, col])
+                self.expected_value[0, 0, row, col] = torch.sum(
+                    self.value[0, :, row, col] * self.chance[0, :, row, col]
+                )
 
         # Get NE payoff and strategies of parent expected value matrix
-        matrix = self.expected_value[0, 0, :self.row_actions, :self.col_actions]
+        matrix = self.expected_value[0, 0, : self.row_actions, : self.col_actions]
         solutions = self._solve(matrix, self.max_actions)
         if len(solutions) == 0:
-            logging.error('matrix still not solved by _solve')
+            logging.error("matrix still not solved by _solve")
             logging.error(matrix)
         pi = solutions[0]
-        
-        pi_1, pi_2 = pi[:self.row_actions].unsqueeze(dim=0), pi[self.max_actions:][:self.col_actions].unsqueeze(dim=1)
+
+        pi_1, pi_2 = pi[: self.row_actions].unsqueeze(dim=0), pi[self.max_actions :][
+            : self.col_actions
+        ].unsqueeze(dim=1)
         self.payoff = torch.matmul(torch.matmul(pi_1, matrix), pi_2)
         self.nash = pi.unsqueeze(dim=0)
-                        
+
         # Update child index tensors
         for _, child in enumerate(child_list):
             mask = child.index.clone()
-            mask[mask > 0] = 1.
+            mask[mask > 0] = 1.0
             mask *= sum(lengths[:_]) + 1
             child.index += mask
 
@@ -207,7 +239,7 @@ class Tree () :
                         sum_ += lengths[_]
                         self.index[0, chance, row, col] *= sum_
                         _ += 1
-        
+
         child_list.insert(0, self)
         if self.is_root:
             terminal_state = Tree(
@@ -219,69 +251,75 @@ class Tree () :
                 row_actions=1,
                 col_actions=1,
             )
-            terminal_state.chance[0,:,0,0] = 0
-            terminal_state.chance[0,0,0,0] = 1
+            terminal_state.chance[0, :, 0, 0] = 0
+            terminal_state.chance[0, 0, 0, 0] = 1
             child_list.insert(0, terminal_state)
 
         self.value = torch.cat(tuple(child.value for child in child_list), dim=0)
-        self.expected_value = torch.cat(tuple(child.expected_value for child in child_list), dim=0)
+        self.expected_value = torch.cat(
+            tuple(child.expected_value for child in child_list), dim=0
+        )
         self.legal = torch.cat(tuple(child.legal for child in child_list), dim=0)
         self.chance = torch.cat(tuple(child.chance for child in child_list), dim=0)
-        self.chance *= self.legal # TODO nash_conv code cant currently assume this has been done 
+        self.chance *= (
+            self.legal
+        )  # TODO nash_conv code cant currently assume this has been done
         self.index = torch.cat(tuple(child.index for child in child_list), dim=0)
         self.payoff = torch.cat(tuple(child.payoff for child in child_list), dim=0)
         self.nash = torch.cat(tuple(child.nash for child in child_list), dim=0)
 
         if self.is_root:
-            self.index += (self.index != 0)
+            self.index += self.index != 0
             self.size = self.value.shape[0]
         self.generated = True
 
-    def save (self, directory_name=None):
+    def save(self, directory_name=None):
         if not self.generated:
-            raise Exception('Attempting to save ungenerated tree')
+            raise Exception("Attempting to save ungenerated tree")
         if not self.is_root:
-            raise Exception('Attempting to save non-root tree')
+            raise Exception("Attempting to save non-root tree")
         if not os.path.exists(self.directory):
-            logging.info('saved_tree directory not found')
-            logging.info('creating directory: {}'.format(self.directory))
+            logging.info("saved_tree directory not found")
+            logging.info("creating directory: {}".format(self.directory))
             os.mkdir(self.directory)
-            
+
         if directory_name is None:
             directory_name = str(int(time.time()))
         named_dir = os.path.join(self.directory, directory_name)
         if not os.path.exists(named_dir):
-            logging.info('creating directory: {}'.format(named_dir))
+            logging.info("creating directory: {}".format(named_dir))
             os.mkdir(named_dir)
 
-        recent_dir = os.path.join(self.directory, 'recent')
+        recent_dir = os.path.join(self.directory, "recent")
         if not os.path.exists(recent_dir):
-            logging.info('creating directory: {}'.format(recent_dir))
+            logging.info("creating directory: {}".format(recent_dir))
             os.mkdir(recent_dir)
 
-        dict = {key:self.__dict__[key] for key in self.saved_keys}
+        dict = {key: self.__dict__[key] for key in self.saved_keys}
         logging.info("saving trees to '{}' and 'recent'".format(named_dir))
-        torch.save(dict, os.path.join(recent_dir, 'tree.tar'))
-        torch.save(dict, os.path.join(named_dir, 'tree.tar'))
+        torch.save(dict, os.path.join(recent_dir, "tree.tar"))
+        torch.save(dict, os.path.join(named_dir, "tree.tar"))
 
-    def load (self, directory_name=None) :
+    def load(self, directory_name=None):
         if directory_name is None:
-            directory_name = 'recent'
-        path = os.path.join(self.directory, directory_name, 'tree.tar')
+            directory_name = "recent"
+        path = os.path.join(self.directory, directory_name, "tree.tar")
         logging.info("loading tree from '{}'".format(directory_name))
         dict = torch.load(path)
         for key, value in dict.items():
             self.__dict__[key] = value
         logging.info("loaded tree has hash {}".format(self.hash.item()))
 
-    def to (self, device):
+    def to(self, device):
         self.device = device
         for key, value in self.__dict__.items():
-            if torch.is_tensor(value): 
+            if torch.is_tensor(value):
                 self.__dict__[key] = value.to(device)
 
-    def display (self,):
-        print('Tree params:')
+    def display(
+        self,
+    ):
+        print("Tree params:")
         for key, value in self.__dict__.items():
             if torch.torch.is_tensor(value):
                 if torch.numel(value) > 20:
@@ -289,7 +327,7 @@ class Tree () :
             print(key, value)
 
 
-if __name__ == '__main__' :
+if __name__ == "__main__":
 
     logging.basicConfig(level=logging.DEBUG)
 
@@ -299,18 +337,18 @@ if __name__ == '__main__' :
         # transition_threshold=.45,
         # row_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
         # col_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
-        row_actions_lambda=lambda tree:3,
-        col_actions_lambda=lambda tree:3,
+        row_actions_lambda=lambda tree: 3,
+        col_actions_lambda=lambda tree: 3,
         row_actions=2,
         col_actions=2,
         # depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 1 * (random.random() < .7),
         depth_bound=3,
         # desc='3x3 but 2x2 at root'
     )
-    
+
     tree._generate()
     print(tree.hash)
     print(tree.size)
-    tree.save('depth3')
+    tree.save("depth3")
 
     print(tree.expected_value[1])
