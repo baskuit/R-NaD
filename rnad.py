@@ -12,7 +12,7 @@ import net
 import vtrace
 import metric
 
-import matplotlib.pyplot as pyplot
+import wandb # much better than usin pyplot >_>
 
 from typing import Any, List, Sequence, Union
 
@@ -43,6 +43,7 @@ class RNaD () :
         directory_name=None,
         net_params=None,
         vtrace_gamma=1,
+        wandb=False,
         same_init_net=False,
     ):
 
@@ -68,6 +69,7 @@ class RNaD () :
         self.epsilon_threshold = epsilon_threshold
         self.n_discrete = n_discrete
         self.vtrace_gamma = vtrace_gamma
+        self.wandb = wandb
 
         if directory_name is None:
             directory_name = str(int(time.perf_counter()))
@@ -96,12 +98,6 @@ class RNaD () :
         self.net_reg_: net.ConvNet = None
 
         self.alpha_lambda = lambda n, delta_m: 1 if n > delta_m / 2 else n * 2 / delta_m
-
-        self.loss_value = {}
-        self.loss_neurd = {}
-        self.nash_conv = {}
-        self.nash_conv_target = {}
-        self.gradient_norm = {}
 
     def _new_net (self,) -> nn.Module:
         if self.net_params['type'] == 'ConvNet':
@@ -168,7 +164,12 @@ class RNaD () :
             checkpoints = [int(os.path.relpath(f.path, last_update)) for f in os.scandir(last_update) if not f.is_dir()]
             self.n = max(checkpoints)
             self._load_checkpoint(self.m, self.n)
-            self._load_logs()
+
+        if self.wandb:
+            wandb.init(
+                resume=bool(updates),
+                project='RNaD',
+            )
 
     def _load_checkpoint (self, m, n):
         saved_dict = torch.load(os.path.join(self.directory, str(m), str(n)))
@@ -213,21 +214,6 @@ class RNaD () :
         saved_dict = torch.load(os.path.join(self.directory, str(m), '0'))
         net.load_state_dict(saved_dict[key])
 
-    def _save_logs (self):
-        saved_dict = {
-            'loss_value':self.loss_value,
-            'loss_neurd':self.loss_neurd,
-            'nash_conv':self.nash_conv,
-            'nash_conv_target':self.nash_conv_target,
-            'gradient_norm': self.gradient_norm,
-        }
-        torch.save(saved_dict, os.path.join(self.directory, 'logs'))
-
-    def _load_logs (self):
-        saved_dict = torch.load(os.path.join(self.directory, 'logs'))
-        for key, value in saved_dict.items():
-            self.__dict__[key] = value
-
     def _get_update_info (self) -> tuple[bool, int]:
         bounding_indices = [_ for _, bound in enumerate(self.delta_m_0) if bound > self.m]
         if not bounding_indices:
@@ -249,12 +235,13 @@ class RNaD () :
         for depth, nash_conv in mean_nash_conv_target.items():
             logging.info('depth:{}, nash_conv:{}'.format(depth, nash_conv))
         # self.nash_conv[self.total_steps] = (nash_conv_data.max_1 - nash_conv_data.min_2)[1].item()
-        self.nash_conv_target[self.total_steps] = (nash_conv_data_target.max_1 - nash_conv_data_target.min_2)[1].item()
+        return (nash_conv_data_target.max_1 - nash_conv_data_target.min_2)[1].item()
 
     def _learn(
         self,
         episodes: batch.Episodes,
         alpha:float,
+        log:dict=None,
     ):
 
             player_id = episodes.turns
@@ -265,7 +252,7 @@ class RNaD () :
             T = valid.shape[0]
 
             logit, log_pi, pi, v = self.net.forward_batch(episodes)
-            pi_processed = pi
+            pi_processed = pi.detach()
             # pi_processed = vtrace.process_policy(pi, episodes.masks, self.n_discrete, self.epsilon_threshold) # TODO this function seems to filter masks too? ofc duh
             v_target_list, has_played_list, v_trace_policy_target_list = [], [], []
 
@@ -320,39 +307,42 @@ class RNaD () :
             loss = loss_v + loss_nerd
             loss.backward()
 
-            nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip)
-
-            avg_traj_len = valid.sum(0).mean(-1)
-
             total_norm = 0
             for p in self.net.parameters():
                 param_norm = p.grad.detach().data.norm(2)
                 total_norm += param_norm.item() ** 2
             total_norm = total_norm ** 0.5
 
+
+            nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip)
+
+            avg_traj_len = valid.sum(0).mean(-1)
+
             to_log = {
                 "loss_v": loss_v.item(),
                 "loss_nerd": loss_nerd.item(),
-                "loss_total": loss.item(),
                 "traj_len": avg_traj_len.item(),
                 "gradient_norm": total_norm,
-                "logit_max":None,
-                "logit_mean":None,
+                "logit_max":torch.max(logit).item(),
+                "logit_mean":logit.mean().item(),
             }
-            return to_log
+            if log is not None:
+                log.update(to_log)
             
     def _resume (
         self,
         max_updates=10**6,
         checkpoint_mod=1000,
         expl_mod=1,
-        loss_mod=20,
+        log_mod=20,
     ) -> None:
 
-        may_resume, delta_m, buffer_size, buffer_mod = self._get_update_info()
+        
         buffer = batch.Buffer(buffer_size)
 
         for _ in range(max_updates):
+            may_resume, delta_m, buffer_size, buffer_mod = self._get_update_info()
+            log = {}
             if not may_resume: return
 
             logging.info('m: {}, delta_m: {}'.format(self.m, delta_m))
@@ -360,7 +350,7 @@ class RNaD () :
             buffer.max_size = buffer_size
 
             if self.m % expl_mod == 0 and self.n == 0 and self.m != 0:
-                self._nash_conv()
+                nash_conv = self._nash_conv()
 
             while self.n < delta_m:
 
@@ -375,7 +365,8 @@ class RNaD () :
                     buffer.append(episodes)
 
                 episodes_sample = buffer.sample(self.batch_size)
-                to_log = self._learn(episodes_sample, alpha)
+                log = {}
+                self._learn(episodes_sample, alpha, log=log)
 
                 self.optimizer.step()
                 self.optimizer.zero_grad()
@@ -387,10 +378,8 @@ class RNaD () :
                     )
                 self.net_target.load_state_dict(params2)
 
-                if self.total_steps % loss_mod == 0:
-                    self.loss_value[self.total_steps] = to_log['loss_v']
-                    self.loss_neurd[self.total_steps] = to_log['loss_nerd']
-                    self.gradient_norm[self.total_steps] = to_log['gradient_norm']
+                if self.n % log_mod == 0 and self.wandb:
+                    wandb.log(log, step=self.total_steps)
 
                 self.n += 1
                 self.total_steps += 1
@@ -401,35 +390,20 @@ class RNaD () :
             self.net_reg_.load_state_dict(self.net_reg.state_dict())
             self.net_reg.load_state_dict(self.net_target.state_dict())
             
-            self._save_logs()
-            may_resume, delta_m, buffer_size, buffer_mod = self._get_update_info()
-            
 
     def run (
         self,
         max_updates=10**6,
         checkpoint_mod=1000,
         expl_mod=1,
-        loss_mod=20
+        log_mod=20
     ):
         self._initialize()
-        self._resume(max_updates=max_updates,checkpoint_mod=checkpoint_mod,expl_mod=expl_mod,loss_mod=loss_mod)
-
-    def calc_nash_conv(self, m_values=[]):
-        
-        self._load_logs()
-        logging.info('RNaD run {}'.format(self.directory_name))
-        for m in m_values:
-            close = [abs(m - m_) < 1 for m_ in self.nash_conv_target.keys()]
-            if any(close):
-                data = self.nash_conv_target[m]
-                continue
-            net_ = self._new_net()
-            self._load_saved_net(net_, m, 'net_target')
-            data = metric.nash_conv(self.tree, net_)
-            self.nash_conv_target[m] = (data.max_1 - data.min_2)[1].item()
-            logging.info('NashConv for m={}: {}'.format(m, self.nash_conv_target[m]))
-            self._save_logs() #!!! not outside the loop
+        self._resume(
+            max_updates=max_updates,
+            checkpoint_mod=checkpoint_mod,
+            expl_mod=expl_mod,
+            log_mod=log_mod)
 
 if __name__ == '__main__' :
 
