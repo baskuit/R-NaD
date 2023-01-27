@@ -44,7 +44,6 @@ class RNaD () :
         net_params=None,
         vtrace_gamma=1,
         same_init_net=False,
-        fixed=True,
     ):
 
         self.tree = tree
@@ -77,7 +76,6 @@ class RNaD () :
         if net_params is None:
             net_params = {'type':'ConvNet','size':self.tree.max_actions,'depth':2,'channels':2**5,'batch_norm':False,'device':self.device}
         self.net_params = net_params
-        self.fixed = fixed
 
 
         #### #### #### ####
@@ -112,7 +110,9 @@ class RNaD () :
             t = net.MLP
         net_params = {_:__ for _, __ in self.net_params.items() if _ != 'type'}
         net_params['device'] = self.device
-        return t(**net_params)
+        new_net = t(**net_params)
+        new_net.eval()
+        return new_net
 
     def _initialize (self):
 
@@ -130,6 +130,7 @@ class RNaD () :
 
             os.mkdir(os.path.join(self.directory, '0'))
             self.net = self._new_net()
+            self.net.train()
             if self.same_init_net:
                 net_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs', self.same_init_net, '0', '0')
                 checkpoint = torch.load(net_dir)
@@ -174,6 +175,7 @@ class RNaD () :
         self.total_steps = saved_dict['total_steps']
         self.net_params = saved_dict['net_params']
         self.net = self._new_net()
+        self.net.train()
         self.net.load_state_dict(saved_dict['net'])
         self.net_target = self._new_net()
         self.net_target.load_state_dict(saved_dict['net_target'])
@@ -294,8 +296,7 @@ class RNaD () :
                         eta=self.eta,
                         gamma=self.vtrace_gamma,
                     )
-                    if not self.fixed:
-                        v_target = v_target_
+
                     v_target_list.append(v_target_)
                     has_played_list.append(has_played)
                     v_trace_policy_target_list.append(policy_target_)
@@ -430,11 +431,6 @@ class RNaD () :
             logging.info('NashConv for m={}: {}'.format(m, self.nash_conv_target[m]))
             self._save_logs() #!!! not outside the loop
 
-    def tag(self) -> str:
-        return 'name: {}, eta: {}, lr: {}, batch_size: {}, gamma_avg: {}'.format(
-            self.directory_name, self.eta, self.lr, self.batch_size, self.gamma_averaging
-        )
-
 if __name__ == '__main__' :
 
     logging.basicConfig(level=logging.DEBUG)
@@ -471,5 +467,5 @@ if __name__ == '__main__' :
         roh_bar=1,
         c_bar=1,
         vtrace_gamma=1,
-        same_init_net='test_fixed_5'
+        # same_init_net='test_fixed_5'
     )
