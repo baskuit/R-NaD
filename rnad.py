@@ -107,7 +107,7 @@ class RNaD () :
         net_params = {_:__ for _, __ in self.net_params.items() if _ != 'type'}
         net_params['device'] = self.device
         new_net = t(**net_params)
-        new_net.eval()
+        # new_net.eval()
         return new_net
 
     def _initialize (self):
@@ -176,7 +176,6 @@ class RNaD () :
         self.total_steps = saved_dict['total_steps']
         self.net_params = saved_dict['net_params']
         self.net = self._new_net()
-        self.net.train()
         self.net.load_state_dict(saved_dict['net'])
         self.net_target = self._new_net()
         self.net_target.load_state_dict(saved_dict['net_target'])
@@ -252,7 +251,7 @@ class RNaD () :
             T = valid.shape[0]
 
             logit, log_pi, pi, v = self.net.forward_batch(episodes)
-            pi_processed = pi.detach()
+            pi_processed = pi
             # pi_processed = vtrace.process_policy(pi, episodes.masks, self.n_discrete, self.epsilon_threshold) # TODO this function seems to filter masks too? ofc duh
             v_target_list, has_played_list, v_trace_policy_target_list = [], [], []
 
@@ -317,14 +316,16 @@ class RNaD () :
             nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip)
 
             avg_traj_len = valid.sum(0).mean(-1)
+            logit_mean = logit.mean().item()
+            logit_max_from_mean = torch.max(torch.abs(logit - logit_mean)).item()
 
             to_log = {
                 "loss_v": loss_v.item(),
                 "loss_nerd": loss_nerd.item(),
                 "traj_len": avg_traj_len.item(),
                 "gradient_norm": total_norm,
-                "logit_max":torch.max(logit).item(),
-                "logit_mean":logit.mean().item(),
+                "logit_mean":logit_mean,
+                "logit_max":logit_max_from_mean,
             }
             if log is not None:
                 log.update(to_log)
@@ -351,6 +352,7 @@ class RNaD () :
 
             if self.m % expl_mod == 0 and self.n == 0 and self.m != 0:
                 nash_conv = self._nash_conv()
+                wandb.log({'nash_conv':nash_conv}, step=self.total_steps)
 
             while self.n < delta_m:
 
@@ -359,13 +361,13 @@ class RNaD () :
                 if self.n % checkpoint_mod == 0:
                     self._save_checkpoint()
 
-                if self.total_steps % buffer_mod == 0:
+                if self.total_steps % self.buffer_mod == 0:
                     episodes = batch.Episodes(self.tree, self.batch_size)
-                    episodes.generate(self.net_reg)
+                    episodes.generate(self.net)
                     buffer.append(episodes)
 
                 episodes_sample = buffer.sample(self.batch_size)
-                log = {}
+                
                 self._learn(episodes_sample, alpha, log=log)
 
                 self.optimizer.step()
@@ -410,41 +412,39 @@ if __name__ == '__main__' :
     logging.basicConfig(level=logging.DEBUG)
 
     tree = game.Tree()
-    tree.load('recent')
+    tree.load('depth4')
     tree.to(torch.device('cuda'))
 
     trial = RNaD(
         tree=tree,
-        # directory_name='test_fixed_{}'.format(int(time.time())), 
-        directory_name='test_fixed_6', 
+        directory_name='test_fixed_{}'.format(int(time.time())), 
+        # directory_name='test_fixed_6', 
         device=tree.device,
         eta=.2,
-        # bounds = [16, 32, 64, 128, 256],
-        # delta_m = [16, 32, 64, 128, 256],
-        # buffer_size= [1, 1, 1, 1, 1],
-        # buffer_mod=  [1, 1, 1, 1, 1],
+
         bounds = [128,],
-        delta_m = [300,],
-        buffer_size= 1,
-        buffer_mod=  1,
-        lr=5*10**-5,
-        batch_size=2**7,
+        delta_m = [500,],
+        buffer_size=1,
+        buffer_mod=1,
+        lr=1*10**-4,
+        batch_size=2**9,
         beta=2, # logit clip
         neurd_clip=10**4, # Q value clip
         grad_clip=10**4, # gradient clip
-        net_params= {'type':'ConvNet','size':tree.max_actions,'channels':2**4,'depth':2,'batch_norm':False,'device':tree.device},
-
+        # net_params= {'type':'ConvNet','size':tree.max_actions,'channels':2**4,'depth':2,'batch_norm':False,'device':tree.device},
+        net_params={'type':'MLP', 'size':tree.max_actions, 'width':2**6},
         b1_adam=0,
         b2_adam=.999,
         epsilon_adam=10**-8,
-        gamma_averaging=.001,
+        gamma_averaging=.01,
         roh_bar=1,
         c_bar=1,
         vtrace_gamma=1,
+        wandb=True,
         # same_init_net='test_fixed_5'
     )
     
     trial.run(
         log_mod=1,
-        expl_mod=10000,
+        expl_mod=1,
     )

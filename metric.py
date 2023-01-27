@@ -136,6 +136,23 @@ def mean_nash_conv_by_depth(data: NashConvData):
         means[depth] = torch.mean(expls).item()
     return means
 
+def kld(
+    p: torch.Tensor,
+    q: torch.Tensor,
+    valid: torch.Tensor,
+    legal_actions: torch.Tensor,
+    valid_count: int = None,
+):
+    if valid_count is None:
+        valid_count = valid.sum().item()
+    return (
+        torch.where(valid.unsqueeze(-1) * legal_actions, p * (torch.log(p) - torch.log(q)), 0)
+        .sum()
+        .item()
+        / valid_count
+    )
+
+
 
 if __name__ == "__main__":
     import game
