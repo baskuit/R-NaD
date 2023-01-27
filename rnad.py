@@ -22,8 +22,8 @@ class RNaD () :
         tree: game.Tree,
         # R-NaD parameters, see paper
         eta=.2,
-        delta_m_0 = [100, 165, 200,],
-        delta_m_1 = [10_000, 100_000, 35_000,],
+        bounds = [100, 165, 200,],
+        delta_m = [10_000, 100_000, 35_000,],
         buffer_size = [1, 1, 1], # This simulates no buffer
         buffer_mod = [1, 1, 1], # How many steps to grab new batch
         lr=5*10**-5,
@@ -51,8 +51,8 @@ class RNaD () :
         self.tree_hash = 0
 
         self.eta = eta
-        self.delta_m_0 = delta_m_0
-        self.delta_m_1 = delta_m_1
+        self.bounds = bounds
+        self.delta_m = delta_m
         self.buffer_size = buffer_size
         self.buffer_mod = buffer_mod
         self.lr = lr
@@ -215,12 +215,12 @@ class RNaD () :
         net.load_state_dict(saved_dict[key])
 
     def _get_update_info (self) -> tuple[bool, int]:
-        bounding_indices = [_ for _, bound in enumerate(self.delta_m_0) if bound > self.m]
+        bounding_indices = [_ for _, bound in enumerate(self.bounds) if bound > self.m]
         if not bounding_indices:
             return False, 0, 1, 1
 
         idx = min(bounding_indices)
-        return True, self.delta_m_1[idx], self.buffer_size[idx], self.buffer_mod[idx]
+        return True, self.delta_m[idx], self.buffer_size[idx], self.buffer_mod[idx]
 
     def _nash_conv (self,):
         logging.info('NashConv at m: {}, n: {}, step {}'.format(self.m, self.n, self.total_steps))
@@ -419,16 +419,16 @@ if __name__ == '__main__' :
         directory_name='test_fixed_6', 
         device=tree.device,
         eta=.2,
-        # delta_m_0 = [16, 32, 64, 128, 256],
-        # delta_m_1 = [16, 32, 64, 128, 256],
+        # bounds = [16, 32, 64, 128, 256],
+        # delta_m = [16, 32, 64, 128, 256],
         # buffer_size= [1, 1, 1, 1, 1],
         # buffer_mod=  [1, 1, 1, 1, 1],
-        delta_m_0 = [128,],
-        delta_m_1 = [100,],
+        bounds = [128,],
+        delta_m = [100,],
         buffer_size= [1,],
         buffer_mod=  [1,],
-        lr=1*10**-4,
-        batch_size=2**9,
+        lr=5*10**-5,
+        batch_size=2**7,
         beta=2, # logit clip
         neurd_clip=10**4, # Q value clip
         grad_clip=10**4, # gradient clip
