@@ -136,6 +136,7 @@ def mean_nash_conv_by_depth(data: NashConvData):
         means[depth] = torch.mean(expls).item()
     return means
 
+
 def kld(
     p: torch.Tensor,
     q: torch.Tensor,
@@ -146,12 +147,13 @@ def kld(
     if valid_count is None:
         valid_count = valid.sum().item()
     return (
-        torch.where(valid.unsqueeze(-1) * legal_actions, p * (torch.log(p) - torch.log(q)), 0)
+        torch.where(
+            valid.unsqueeze(-1) * legal_actions, p * (torch.log(p) - torch.log(q)), 0
+        )
         .sum()
         .item()
         / valid_count
     )
-
 
 
 if __name__ == "__main__":
@@ -163,7 +165,7 @@ if __name__ == "__main__":
         max_actions=3,
     )
     # tree.load('1667264620')
-    tree._generate()
+    tree.generate()
     tree._assert_index_is_tree()
     net_ = net.ConvNet(tree.max_actions, 1, 1)
 

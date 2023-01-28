@@ -172,7 +172,7 @@ class Tree:
         solutions.sort(key=purity)
         return torch.tensor(solutions, dtype=torch.float).to(self.device)
 
-    def _generate(self):
+    def generate(self):
         child_list: list[Tree] = []
         lengths: list[int] = []
 
@@ -189,7 +189,7 @@ class Tree:
                             child.depth_bound > 0
                             and child.row_actions * child.col_actions > 0
                         ):
-                            child._generate()
+                            child.generate()
                             self.hash = torch.bitwise_xor(self.hash, child.hash)
                             child_list.append(child)
                             lengths.append(child.value.shape[0])
@@ -203,7 +203,9 @@ class Tree:
                             ).to(self.device)
 
                         self.value[0, chance, row, col] = child_payoff.item()
-                self.expected_value[0, 0, row, col] = torch.sum(self.value[0, :, row, col] * self.chance[0, :, row, col])
+                self.expected_value[0, 0, row, col] = torch.sum(
+                    self.value[0, :, row, col] * self.chance[0, :, row, col]
+                )
 
         # Get NE payoff and strategies of parent expected value matrix
         matrix = self.expected_value[0, 0, : self.row_actions, : self.col_actions]
@@ -223,7 +225,7 @@ class Tree:
         __ = 1
         for _, child in enumerate(child_list):
             mask = child.index.clone()
-            mask[mask > 0] = 1.
+            mask[mask > 0] = 1.0
             mask *= __
 
             child.index += mask
@@ -335,22 +337,22 @@ if __name__ == "__main__":
     tree = Tree(
         max_actions=2,
         max_transitions=2,
-        transition_threshold=.4,
+        transition_threshold=0.4,
         # row_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
         # col_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
         # row_actions_lambda=lambda tree:3,
         # col_actions_lambda=lambda tree:3,
         # row_actions=2,
         # col_actions=2,
-        depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 2 * (random.random() < .5),
+        depth_bound_lambda=lambda tree: tree.depth_bound
+        - 1
+        - 2 * (random.random() < 0.5),
         # depth_bound_lambda=lambda tree:tree.depth_bound - 2,
-
         depth_bound=5,
-
         # desc='3x3 but 2x2 at root'
     )
 
-    tree._generate()
+    tree.generate()
     for _ in tree.index:
         print(_)
     tree._assert_index_is_tree()
@@ -358,4 +360,3 @@ if __name__ == "__main__":
     print(tree.hash)
     print(tree.size)
     print(tree.expected_value[1])
-
