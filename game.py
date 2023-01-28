@@ -203,9 +203,7 @@ class Tree:
                             ).to(self.device)
 
                         self.value[0, chance, row, col] = child_payoff.item()
-                self.expected_value[0, 0, row, col] = torch.sum(
-                    self.value[0, :, row, col] * self.chance[0, :, row, col]
-                )
+                self.expected_value[0, 0, row, col] = torch.sum(self.value[0, :, row, col] * self.chance[0, :, row, col])
 
         # Get NE payoff and strategies of parent expected value matrix
         matrix = self.expected_value[0, 0, : self.row_actions, : self.col_actions]
@@ -222,11 +220,14 @@ class Tree:
         self.nash = pi.unsqueeze(dim=0)
 
         # Update child index tensors
+        __ = 1
         for _, child in enumerate(child_list):
             mask = child.index.clone()
-            mask[mask > 0] = 1.0
-            mask *= sum(lengths[:_]) + 1
+            mask[mask > 0] = 1.
+            mask *= __
+
             child.index += mask
+            __ += child.value.shape[0]
 
         # Update root index tensor
         _ = 0
@@ -332,23 +333,29 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
 
     tree = Tree(
-        max_actions=3,
-        max_transitions=1,
-        # transition_threshold=.45,
+        max_actions=2,
+        max_transitions=2,
+        transition_threshold=.4,
         # row_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
         # col_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
-        row_actions_lambda=lambda tree: 3,
-        col_actions_lambda=lambda tree: 3,
+        # row_actions_lambda=lambda tree:3,
+        # col_actions_lambda=lambda tree:3,
         # row_actions=2,
         # col_actions=2,
-        # depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 1 * (random.random() < .7),
-        depth_bound=4,
+        depth_bound_lambda=lambda tree:tree.depth_bound - 1 - 2 * (random.random() < .5),
+        # depth_bound_lambda=lambda tree:tree.depth_bound - 2,
+
+        depth_bound=5,
+
         # desc='3x3 but 2x2 at root'
     )
 
     tree._generate()
+    for _ in tree.index:
+        print(_)
+    tree._assert_index_is_tree()
+    exit()
     print(tree.hash)
     print(tree.size)
-    tree.save("depth4")
-
     print(tree.expected_value[1])
+
