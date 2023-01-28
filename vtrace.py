@@ -4,8 +4,11 @@ import numpy as np
 
 from typing import Any, Callable, NamedTuple, Sequence, Tuple
 
-def process_policy(policy:torch.Tensor, mask:torch.Tensor, n_disc, epsilon_threshold=.03):
-    
+
+def process_policy(
+    policy: torch.Tensor, mask: torch.Tensor, n_disc, epsilon_threshold=0.03
+):
+
     t_eff, batch_size, n_actions = policy.shape
     policy = torch.flatten(policy, 0, 1)
     mask = torch.flatten(mask, 0, 1)
@@ -14,8 +17,9 @@ def process_policy(policy:torch.Tensor, mask:torch.Tensor, n_disc, epsilon_thres
     # threshold
     mask = mask * (
         (policy >= epsilon_threshold)
-        +
-        (torch.max(policy, dim=-1, keepdim=True).values < epsilon_threshold) #prevent degen case where all < eps)
+        + (
+            torch.max(policy, dim=-1, keepdim=True).values < epsilon_threshold
+        )  # prevent degen case where all < eps)
     )
     policy = mask * policy / torch.sum(mask * policy, dim=-1, keepdim=True)
 
@@ -47,7 +51,9 @@ class LoopVTraceCarry(NamedTuple):
     importance_sampling: torch.Tensor
 
 
-def _player_others(player_ids: torch.Tensor, valid: torch.Tensor, player: int) -> torch.Tensor:
+def _player_others(
+    player_ids: torch.Tensor, valid: torch.Tensor, player: int
+) -> torch.Tensor:
     """A vector of 1 for the current player and -1 for others.
 
     Args:
@@ -65,11 +71,17 @@ def _player_others(player_ids: torch.Tensor, valid: torch.Tensor, player: int) -
     return torch.unsqueeze(res, dim=-1)
 
 
-def _where(pred: torch.Tensor, true_data: torch.Tensor, false_data: torch.Tensor) -> torch.Tensor:
+def _where(
+    pred: torch.Tensor, true_data: torch.Tensor, false_data: torch.Tensor
+) -> torch.Tensor:
     """Similar to jax.where but treats `pred` as a broadcastable prefix."""
 
     def _where_one(t, f):
-        if isinstance(t, LoopVTraceCarry) or isinstance(t, tuple) or isinstance(t, list):
+        if (
+            isinstance(t, LoopVTraceCarry)
+            or isinstance(t, tuple)
+            or isinstance(t, list)
+        ):
             res = [_where_one(ts, fs) for ts, fs in zip(t, f)]
             if isinstance(t, LoopVTraceCarry):
                 return LoopVTraceCarry(*res)
@@ -77,7 +89,9 @@ def _where(pred: torch.Tensor, true_data: torch.Tensor, false_data: torch.Tensor
                 return res
         else:
             # Expand the dimensions of pred if true_data and false_data are higher rank.
-            p = torch.reshape(pred, pred.shape + (1,) * (len(t.shape) - len(pred.shape))).to(torch.bool)
+            p = torch.reshape(
+                pred, pred.shape + (1,) * (len(t.shape) - len(pred.shape))
+            ).to(torch.bool)
             return torch.where(p, t, f)
 
     output = [_where_one(td, fd) for td, fd in zip(true_data, false_data)]
@@ -108,7 +122,9 @@ def scan(f: Callable, init, xs, length=None, reverse: bool = False):
     return carry, res
 
 
-def _has_played(valid: torch.Tensor, player_id: torch.Tensor, player: int) -> torch.Tensor:
+def _has_played(
+    valid: torch.Tensor, player_id: torch.Tensor, player: int
+) -> torch.Tensor:
     """Compute a mask of states which have a next state in the sequence."""
     assert valid.shape == player_id.shape
 
@@ -145,7 +161,9 @@ def _has_played(valid: torch.Tensor, player_id: torch.Tensor, player: int) -> to
     return result
 
 
-def _policy_ratio(pi: torch.Tensor, mu: torch.Tensor, actions_oh: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+def _policy_ratio(
+    pi: torch.Tensor, mu: torch.Tensor, actions_oh: torch.Tensor, valid: torch.Tensor
+) -> torch.Tensor:
     """Returns a ratio of policy pi/mu when selecting action a.
 
     By convention, this ratio is 1 on non valid states
@@ -186,17 +204,22 @@ def v_trace(
     lambda_: float,
     c: float,
     rho: float,
-    gamma = 1.0,
+    gamma=1.0,
 ) -> Tuple[Any, Any, Any]:
     """Custom VTrace for trajectories with a mix of different player steps."""
-    
 
     has_played = _has_played(valid, player_id, player)
 
     policy_ratio = _policy_ratio(merged_policy, acting_policy, actions_oh, valid)
-    inv_mu = _policy_ratio(torch.ones_like(merged_policy), acting_policy, actions_oh, valid)
+    inv_mu = _policy_ratio(
+        torch.ones_like(merged_policy), acting_policy, actions_oh, valid
+    )
 
-    eta_reg_entropy = -eta * torch.sum(merged_policy * merged_log_policy, dim=-1) * torch.squeeze(player_others, dim=-1)
+    eta_reg_entropy = (
+        -eta
+        * torch.sum(merged_policy * merged_log_policy, dim=-1)
+        * torch.squeeze(player_others, dim=-1)
+    )
     eta_log_policy = -eta * merged_log_policy * player_others
 
     init_state_v_trace = LoopVTraceCarry(
@@ -208,7 +231,17 @@ def v_trace(
     )
 
     def _loop_v_trace(carry: LoopVTraceCarry, x) -> Tuple[LoopVTraceCarry, Any]:
-        (cs, player_id, v, reward, eta_reg_entropy, valid, inv_mu, actions_oh, eta_log_policy) = x
+        (
+            cs,
+            player_id,
+            v,
+            reward,
+            eta_reg_entropy,
+            valid,
+            inv_mu,
+            actions_oh,
+            eta_log_policy,
+        ) = x
 
         reward_uncorrected = reward + gamma * carry.reward_uncorrected + eta_reg_entropy
         discounted_reward = reward + gamma * carry.reward
@@ -216,10 +249,18 @@ def v_trace(
         # V-target:
         our_v_target = (
             v
-            + torch.unsqueeze(torch.clamp(cs * carry.importance_sampling, max=rho), dim=-1)
-            * (torch.unsqueeze(reward_uncorrected, dim=-1) + gamma * carry.next_value - v)
+            + torch.unsqueeze(
+                torch.clamp(cs * carry.importance_sampling, max=rho), dim=-1
+            )
+            * (
+                torch.unsqueeze(reward_uncorrected, dim=-1)
+                + gamma * carry.next_value
+                - v
+            )
             + lambda_
-            * torch.unsqueeze(torch.clamp(cs * carry.importance_sampling, max=c), dim=-1)
+            * torch.unsqueeze(
+                torch.clamp(cs * carry.importance_sampling, max=c), dim=-1
+            )
             * gamma
             * (carry.next_v_target - carry.next_value)
         )
@@ -235,7 +276,9 @@ def v_trace(
             * torch.unsqueeze(inv_mu, dim=-1)
             * (
                 torch.unsqueeze(discounted_reward, dim=-1)
-                + gamma * torch.unsqueeze(carry.importance_sampling, dim=-1) * carry.next_v_target
+                + gamma
+                * torch.unsqueeze(carry.importance_sampling, dim=-1)
+                * carry.next_v_target
                 - v
             )
         )
@@ -292,8 +335,12 @@ def v_trace(
 
     return v_target, has_played, learning_output
 
+
 def apply_force_with_threshold(
-    decision_outputs: torch.Tensor, force: torch.Tensor, threshold: float, threshold_center: torch.Tensor
+    decision_outputs: torch.Tensor,
+    force: torch.Tensor,
+    threshold: float,
+    threshold_center: torch.Tensor,
 ) -> torch.Tensor:
     """Apply the force with below a given threshold."""
     can_decrease = decision_outputs - threshold_center > -threshold
@@ -309,6 +356,7 @@ def renormalize(loss: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     loss = torch.sum(loss * mask)
     normalization = torch.sum(mask)
     return loss / (normalization + (normalization == 0.0))
+
 
 def get_loss_v(
     v_list: Sequence[torch.Tensor],
@@ -327,6 +375,7 @@ def get_loss_v(
         loss_v_list.append(loss_v)
 
     return sum(loss_v_list)
+
 
 def get_loss_nerd(
     logit_list: Sequence[torch.Tensor],
@@ -357,11 +406,14 @@ def get_loss_nerd(
         threshold_center = torch.zeros_like(logits)
 
         nerd_loss = torch.sum(
-            legal_actions * apply_force_with_threshold(logits, adv_pi, threshold, threshold_center), axis=-1
+            legal_actions
+            * apply_force_with_threshold(logits, adv_pi, threshold, threshold_center),
+            axis=-1,
         )
         nerd_loss = -renormalize(nerd_loss, valid * (player_ids == k))
         loss_pi_list.append(nerd_loss)
     return sum(loss_pi_list)
+
 
 if __name__ == "__main__":
 
@@ -370,19 +422,19 @@ if __name__ == "__main__":
     import batch
 
     import rnad
-    
+
     tree = game.Tree()
     tree.load()
 
     episodes = batch.Episodes(tree, 1)
-    
+
     net_ = net.MLP(tree.max_actions, 2**7, tree.device)
 
     episodes.generate(net_)
 
     def _learn(
         episodes: batch.Episodes,
-        alpha:float,
+        alpha: float,
     ):
 
         player_id = episodes.turns
@@ -402,7 +454,6 @@ if __name__ == "__main__":
             _, log_pi_reg, _, _ = net_.forward_batch(episodes)
             _, log_pi_reg_, _, _ = net_.forward_batch(episodes)
 
-
             log_policy_reg = log_pi - (alpha * log_pi_reg + (1 - alpha) * log_pi_reg_)
 
             for player in range(2):
@@ -421,7 +472,7 @@ if __name__ == "__main__":
                     lambda_=1.0,
                     c=1,
                     rho=1,
-                    eta=.2,
+                    eta=0.2,
                     gamma=1,
                 )
                 v_target_list.append(v_target)
