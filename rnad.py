@@ -45,8 +45,12 @@ class RNaD () :
         vtrace_gamma=1,
         wandb=False,
         same_init_net=False,
-    ):
+        value_weight=1,
+        neurd_weight=1,
 
+    ):
+        self.neurd_weight = neurd_weight
+        self.value_weight = value_weight
         self.tree = tree
         self.tree_hash = 0
 
@@ -74,7 +78,7 @@ class RNaD () :
         if directory_name is None:
             directory_name = str(int(time.perf_counter()))
         self.directory_name = directory_name
-        self.device = device
+        
         if net_params is None:
             net_params = {'type':'ConvNet','size':self.tree.max_actions,'depth':2,'channels':2**5,'batch_norm':False,'device':self.device}
         self.net_params = net_params
@@ -83,6 +87,7 @@ class RNaD () :
         #### #### #### ####
         self.saved_keys = [key for key in self.__dict__.keys() if key != 'tree']
         #### #### #### ####
+        self.device = device
         saved_runs_dir =  os.path.join(os.path.dirname(os.path.realpath(__file__)), 'saved_runs')
         if not os.path.exists(saved_runs_dir):
             os.mkdir(saved_runs_dir)        
@@ -107,7 +112,7 @@ class RNaD () :
         net_params = {_:__ for _, __ in self.net_params.items() if _ != 'type'}
         net_params['device'] = self.device
         new_net = t(**net_params)
-        # new_net.eval()
+        new_net.eval()
         return new_net
 
     def _initialize (self):
@@ -169,6 +174,9 @@ class RNaD () :
             wandb.init(
                 resume=bool(updates),
                 project='RNaD',
+                config={
+                    key : self.__dict__[key] for key in self.saved_keys
+                },
             )
 
     def _load_checkpoint (self, m, n):
@@ -303,7 +311,7 @@ class RNaD () :
                 threshold=self.beta,
             )
 
-            loss = loss_v + loss_nerd
+            loss = self.value_weight * loss_v + self.neurd_weight * loss_nerd
             loss.backward()
 
             total_norm = 0
@@ -311,7 +319,6 @@ class RNaD () :
                 param_norm = p.grad.detach().data.norm(2)
                 total_norm += param_norm.item() ** 2
             total_norm = total_norm ** 0.5
-
 
             nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip)
 
@@ -412,7 +419,7 @@ if __name__ == '__main__' :
     logging.basicConfig(level=logging.DEBUG)
 
     tree = game.Tree()
-    tree.load('depth4')
+    tree.load('depth4-4')
     tree.to(torch.device('cuda'))
 
     trial = RNaD(
@@ -423,20 +430,23 @@ if __name__ == '__main__' :
         eta=.2,
 
         bounds = [128,],
-        delta_m = [500,],
+        delta_m = [5000,],
         buffer_size=1,
         buffer_mod=1,
-        lr=1*10**-4,
-        batch_size=2**9,
+        lr=1*10**-3,
+        gamma_averaging=.01,
+
+        value_weight=1,
+
+        batch_size=2**10,
         beta=2, # logit clip
         neurd_clip=10**4, # Q value clip
         grad_clip=10**4, # gradient clip
-        # net_params= {'type':'ConvNet','size':tree.max_actions,'channels':2**4,'depth':2,'batch_norm':False,'device':tree.device},
-        net_params={'type':'MLP', 'size':tree.max_actions, 'width':2**6},
+        # net_params= {'type':'ConvNet','size':tree.max_actions,'channels':2**4,'depth':2,'batch_norm':True,'device':tree.device},
+        net_params={'type':'MLP', 'size':tree.max_actions, 'width':2**8},
         b1_adam=0,
         b2_adam=.999,
         epsilon_adam=10**-8,
-        gamma_averaging=.01,
         roh_bar=1,
         c_bar=1,
         vtrace_gamma=1,
