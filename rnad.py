@@ -302,6 +302,7 @@ class RNaD:
         policy = episodes.policy
         rewards = torch.stack([episodes.rewards, -episodes.rewards], dim=0)
         valid = (episodes.indices != 0).to(torch.float)
+        masks = episodes.masks
         T = valid.shape[0]
 
         logit, log_pi, pi, v = self.net.forward_batch(episodes)
@@ -310,7 +311,7 @@ class RNaD:
         v_target_list, has_played_list, v_trace_policy_target_list = [], [], []
 
         with torch.no_grad():
-            _, _, _, v_target = self.net_target.forward_batch(episodes)
+            _, _, pi_target, v_target = self.net_target.forward_batch(episodes)
             _, log_pi_reg, _, _ = self.net_reg.forward_batch(episodes)
             _, log_pi_reg_, _, _ = self.net_reg_.forward_batch(episodes)
 
@@ -350,7 +351,7 @@ class RNaD:
             v_trace_policy_target_list,
             valid,
             player_id,
-            episodes.masks,
+            masks,
             importance_sampling_correction,
             clip=self.neurd_clip,
             threshold=self.beta,
@@ -359,28 +360,36 @@ class RNaD:
         loss = self.value_weight * loss_v + self.neurd_weight * loss_nerd
         loss.backward()
 
-        total_norm = 0
-        for p in self.net.parameters():
-            param_norm = p.grad.detach().data.norm(2)
-            total_norm += param_norm.item() ** 2
-        total_norm = total_norm**0.5
+        if log is not None:
+            total_norm = 0
+            for p in self.net.parameters():
+                param_norm = p.grad.detach().data.norm(2)
+                total_norm += param_norm.item() ** 2
+            total_norm = total_norm**0.5
+
+            avg_traj_len = valid.sum(0).mean(-1)
+            logit_mean = logit.mean().item()
+            logit_max_from_mean = torch.max(torch.abs(logit - logit_mean)).item()
+
+            uniform_policy = torch.nn.functional.normalize(masks, p=1, dim=-1)
+            entropy = metric.kld(pi, uniform_policy, valid, legal_actions=masks)
+            entropy_target = metric.kld(pi_target, uniform_policy, valid, legal_actions=masks)
+            actor_learner_kld = metric.kld(pi, policy, valid, legal_actions=masks)
+
+            to_log = {
+                "loss_v": loss_v.item(),
+                "loss_nerd": loss_nerd.item(),
+                "traj_len": avg_traj_len.item(),
+                "gradient_norm": total_norm,
+                "logit_mean": logit_mean,
+                "logit_max": logit_max_from_mean,
+                "entropy": entropy,
+                "entropy_target": entropy_target,
+                "actor_learner_kld": actor_learner_kld,
+            }
+            log.update(to_log)
 
         nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip)
-
-        avg_traj_len = valid.sum(0).mean(-1)
-        logit_mean = logit.mean().item()
-        logit_max_from_mean = torch.max(torch.abs(logit - logit_mean)).item()
-
-        to_log = {
-            "loss_v": loss_v.item(),
-            "loss_nerd": loss_nerd.item(),
-            "traj_len": avg_traj_len.item(),
-            "gradient_norm": total_norm,
-            "logit_mean": logit_mean,
-            "logit_max": logit_max_from_mean,
-        }
-        if log is not None:
-            log.update(to_log)
 
     def _resume(
         self,
@@ -394,7 +403,7 @@ class RNaD:
 
         for _ in range(max_updates):
             may_resume, delta_m = self._get_update_info()
-            log = {}
+            
             if not may_resume:
                 return
 
@@ -421,7 +430,10 @@ class RNaD:
 
                 episodes_sample = buffer.sample(self.batch_size)
 
+                log = {} if (self.n % log_mod == 0 and self.wandb) else None
                 self._learn(episodes_sample, alpha, log=log)
+                if log:
+                    wandb.log(log, step=self.total_steps)
 
                 self.optimizer.step()
                 self.optimizer.zero_grad()
@@ -433,9 +445,6 @@ class RNaD:
                         + (1 - self.gamma_averaging) * params2[name1].data
                     )
                 self.net_target.load_state_dict(params2)
-
-                if self.n % log_mod == 0 and self.wandb:
-                    wandb.log(log, step=self.total_steps)
 
                 self.n += 1
                 self.total_steps += 1
