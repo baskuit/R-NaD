@@ -10,8 +10,11 @@ Using this platform, anyone with a reasonably powered PC can experiment with the
 # R-NaD
 
 Introduced here:
+
 https://arxiv.org/abs/2002.08456
+
 DeepNash (SOTA Stratego agent):
+
 https://arxiv.org/abs/2206.15378
 
 This new regularization allows neural network policies to converge to Nash equilibrium in imperfect information games, which previously were a well-known failure case for policy gradient.
