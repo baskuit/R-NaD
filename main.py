@@ -42,16 +42,24 @@ if __name__ == "__main__":
 
     tree.generate()
     tree.assert_index_is_tree()
-    # tree.save('small_tree')
-    tree.load('small_tree')
+    tree.save('small_tree')
+    # tree.load('small_tree')
 
     etas_to_test = [0, .2, .5, 1]
+    timestamp = str(int(time()))
 
-    for eta in etas_to_test:
+    for idx, eta in enumerate(etas_to_test):
+
+        same_init_net = None if idx == 0 else f"{timestamp}-eta={etas_to_test[0]}"
+        # We want to use same initial net to compare. Usually I have a pre-saved run sitting around.
+
         trial = RNaD(
+            same_init_net=same_init_net,
             tree=tree,
-            directory_name=f"eta={eta}",
+            directory_name=f"{timestamp}-eta={eta}",
             device=tree.device,
+            wandb=True,
+
             eta=eta,
             bounds=[
                 64,
@@ -63,9 +71,9 @@ if __name__ == "__main__":
             gamma_averaging=0.01,
             batch_size=2**9,
             logit_clip=2,
+
             # net_params= {'type':'ConvNet','size':tree.max_actions,'channels':2**4,'depth':2,'batch_norm':True,'device':tree.device},
             net_params={"type": "MLP", "size": tree.max_actions, "width": 2**8},
-            wandb=True,
         )
 
         trial.run(
