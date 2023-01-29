@@ -36,8 +36,14 @@ class States:
     ) -> torch.Tensor:
         """
         Instead of simply returning the expected value matrix from the pov of the player,
-        we now transform the image so it is both high dimensional and noisy
+        we now transform the image so it is both high dimensional and noisy.
+
+        This allows us to test the algorithm's robustness to the Credit Assignment problem,
+        and the effictiveness of representation learning techniques
+
+        Coming Soon.
         """
+        return None
 
     def step(self, actions) -> torch.Tensor:
         if self.turns[0] == 0:

@@ -16,12 +16,13 @@ By default we store game-wide tensors on cpu
 
 class NashConvData:
     def __init__(self, tree: game.Tree):
+        self.size = tree.value.shape[0]
         self.policy = torch.zeros(
-            (tree.size, 2 * tree.max_actions), device=tree.device, dtype=torch.float
+            (self.size, 2 * tree.max_actions), device=tree.device, dtype=torch.float
         )
-        self.max_1 = torch.zeros((tree.size,), device=tree.device, dtype=torch.float)
-        self.min_2 = torch.zeros((tree.size,), device=tree.device, dtype=torch.float)
-        self.depth = torch.zeros((tree.size,), device=tree.device, dtype=torch.int)
+        self.max_1 = torch.zeros((self.size,), device=tree.device, dtype=torch.float)
+        self.min_2 = torch.zeros((self.size,), device=tree.device, dtype=torch.float)
+        self.depth = torch.zeros((self.size,), device=tree.device, dtype=torch.int)
 
     def to(self, device):
         for key, value in self.__dict__.items():
@@ -34,10 +35,10 @@ def nash_conv(tree: game.Tree, net: net.ConvNet, inference_batch_size=10**5):
     data = NashConvData(tree)
 
     net.eval()
-    for _ in range(tree.size // inference_batch_size + 1):
+    for _ in range(data.size // inference_batch_size + 1):
         slice_range = torch.arange(
             _ * inference_batch_size,
-            min((_ + 1) * inference_batch_size, tree.size),
+            min((_ + 1) * inference_batch_size, data.size),
             device=tree.device,
         )
         value_slice = tree.expected_value[slice_range]
@@ -136,6 +137,7 @@ def mean_nash_conv_by_depth(data: NashConvData):
         means[depth] = torch.mean(expls).item()
     return means
 
+
 def kld(
     p: torch.Tensor,
     q: torch.Tensor,
@@ -146,12 +148,13 @@ def kld(
     if valid_count is None:
         valid_count = valid.sum().item()
     return (
-        torch.where(valid.unsqueeze(-1) * legal_actions, p * (torch.log(p) - torch.log(q)), 0)
+        torch.where(
+            (valid.unsqueeze(-1) * legal_actions).to(torch.bool), p * (torch.log(p) - torch.log(q)), 0
+        )
         .sum()
         .item()
         / valid_count
     )
-
 
 
 if __name__ == "__main__":
@@ -163,8 +166,8 @@ if __name__ == "__main__":
         max_actions=3,
     )
     # tree.load('1667264620')
-    tree._generate()
-    tree._assert_index_is_tree()
+    tree.generate()
+    tree.assert_index_is_tree()
     net_ = net.ConvNet(tree.max_actions, 1, 1)
 
     # pi = tree.nash
