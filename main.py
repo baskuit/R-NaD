@@ -77,6 +77,8 @@ if __name__ == "__main__":
         )
 
         trial.run(
-            log_mod=10,
-            expl_mod=1,
+            # every _ steps:
+            log_mod=10, # send wandb log
+            expl_mod=1, # calc expl
+            checkpoint_mod=1, #save nets
         )
