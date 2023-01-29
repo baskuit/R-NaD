@@ -14,7 +14,7 @@ import metric
 
 import wandb  # much better than usin pyplot >_>
 
-from typing import Any, List, Sequence, Union
+from typing import Dict
 
 
 class RNaD:
@@ -36,7 +36,7 @@ class RNaD:
         buffer_size=1,  # This simulates no buffer
         buffer_mod=1,  # How many steps to grab new batch
         lr=5 * 10**-5,
-        beta=2,
+        logit_clip=2,
         neurd_clip=10**3,
         grad_clip=10**3,
         b1_adam=0,
@@ -68,7 +68,7 @@ class RNaD:
         self.buffer_size = buffer_size
         self.buffer_mod = buffer_mod
         self.lr = lr
-        self.beta = beta
+        self.beta = logit_clip
         self.neurd_clip = neurd_clip
         self.grad_clip = grad_clip
         self.b1_adam = b1_adam
@@ -404,7 +404,8 @@ class RNaD:
 
             if self.m % expl_mod == 0 and self.n == 0 and self.m != 0:
                 nash_conv = self._nash_conv()
-                wandb.log({"nash_conv": nash_conv}, step=self.total_steps)
+                if self.wandb:
+                    wandb.log({"nash_conv": nash_conv}, step=self.total_steps)
 
             while self.n < delta_m:
 
@@ -424,8 +425,8 @@ class RNaD:
 
                 self.optimizer.step()
                 self.optimizer.zero_grad()
-                params1 = self.net.state_dict()
-                params2 = self.net_target.state_dict()
+                params1: Dict['str', torch.Tensor] = self.net.state_dict()
+                params2: Dict['str', torch.Tensor] = self.net_target.state_dict()
                 for name1, param1 in params1.items():
                     params2[name1].data.copy_(
                         self.gamma_averaging * param1.data
@@ -452,50 +453,10 @@ class RNaD:
             expl_mod=expl_mod,
             log_mod=log_mod,
         )
+        if self.wandb:
+            wandb.finish()
 
 
 if __name__ == "__main__":
 
-    logging.basicConfig(level=logging.DEBUG)
-
-    tree = game.Tree()
-    tree.load("depth4-4")
-    tree.to(torch.device("cuda"))
-
-    trial = RNaD(
-        tree=tree,
-        directory_name="test_fixed_{}".format(int(time.time())),
-        # directory_name='test_fixed_6',
-        device=tree.device,
-        eta=0.2,
-        bounds=[
-            128,
-        ],
-        delta_m=[
-            5000,
-        ],
-        buffer_size=1,
-        buffer_mod=1,
-        lr=1 * 10**-3,
-        gamma_averaging=0.01,
-        value_weight=1,
-        batch_size=2**10,
-        beta=2,  # logit clip
-        neurd_clip=10**4,  # Q value clip
-        grad_clip=10**4,  # gradient clip
-        # net_params= {'type':'ConvNet','size':tree.max_actions,'channels':2**4,'depth':2,'batch_norm':True,'device':tree.device},
-        net_params={"type": "MLP", "size": tree.max_actions, "width": 2**8},
-        b1_adam=0,
-        b2_adam=0.999,
-        epsilon_adam=10**-8,
-        roh_bar=1,
-        c_bar=1,
-        vtrace_gamma=1,
-        wandb=True,
-        # same_init_net='test_fixed_5'
-    )
-
-    trial.run(
-        log_mod=1,
-        expl_mod=1,
-    )
+    pass
