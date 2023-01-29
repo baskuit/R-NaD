@@ -166,7 +166,7 @@ if __name__ == "__main__":
     )
     # tree.load('1667264620')
     tree.generate()
-    tree._assert_index_is_tree()
+    tree.assert_index_is_tree()
     net_ = net.ConvNet(tree.max_actions, 1, 1)
 
     # pi = tree.nash
