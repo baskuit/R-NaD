@@ -25,9 +25,9 @@ The imperfect information game implemented here is an abstract stochastic matrix
 
 The trees are randomly generated and can express wide range of depth and stochasticity using the provided numeric and functional parameters.
 
-The default observation a state the matrix of expected payoff, assuming the rest of the game is played perfectly by both players.
+The default observation of a state is the matrix of expected payoff, under the assumption the rest of the game is played perfectly by both players.
 
-This means our contrived game is well behaved, in the sense that observations actually contain info about the optimal policy.
+This means our contrived game is well-behaved, in the sense that observations actually contain info about the optimal policy.
 
 
 ![Alt text](logs.png?raw=true "Title")

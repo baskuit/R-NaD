@@ -15,7 +15,7 @@ if __name__ == "__main__":
     so that if we want to do another RNaD run on the same tree, we can simply
     call "tree.load()" instead.
 
-    The project uses wandb for data visualization. It is disabled by default but recommended.
+    The project uses wandb for data visualization. It can be disabled.
 
     How to interpret results:
     The objective is to minimize the exploitablity ("NashConv") of our networks policy.
@@ -24,8 +24,6 @@ if __name__ == "__main__":
     The lowest possible NashConv is 0, aka the policy is a Nash Eqilibrium.
     The highest possible NashConv is 2, when rewards are bounded [-1, 1].
     In general, the NashConv converges to the max value rapidly as the depth of the game increases
-
-    The original R-NaD paper achieves 
     """
 
     logging.basicConfig(level=logging.DEBUG)
