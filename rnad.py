@@ -18,10 +18,20 @@ from typing import Dict
 
 
 class RNaD:
+
+    """
+    Most of these params are found in the paper.
+    
+    "bounds" and "delta_m" set the regularization net update schedule.
+    The default values describe the ones from the paper, which should explain how they work.
+
+    "buffer_size" and "buffer_mod" are used to simulate a replay buffer.
+    The default values are equivalent to using a fresh batch each step.
+    """
+
     def __init__(
         self,
         tree: game.Tree,
-        # R-NaD parameters, see paper
         eta=0.2,
         bounds=[
             100,
@@ -52,13 +62,12 @@ class RNaD:
         directory_name=None,
         net_params=None,
         vtrace_gamma=1,
+        value_loss_weight=1,
+        neurd_loss_weight=1,
         wandb=False,
         same_init_net=False,
-        value_weight=1,
-        neurd_weight=1,
     ):
-        self.neurd_weight = neurd_weight
-        self.value_weight = value_weight
+
         self.tree = tree
         self.tree_hash = 0
 
@@ -81,6 +90,8 @@ class RNaD:
         self.epsilon_threshold = epsilon_threshold
         self.n_discrete = n_discrete
         self.vtrace_gamma = vtrace_gamma
+        self.neurd_weight = neurd_loss_weight
+        self.value_weight = value_loss_weight
         self.wandb = wandb
 
         if directory_name is None:
@@ -89,12 +100,9 @@ class RNaD:
 
         if net_params is None:
             net_params = {
-                "type": "ConvNet",
+                "type": "MLP",
                 "size": self.tree.max_actions,
-                "depth": 2,
-                "channels": 2**5,
-                "batch_norm": False,
-                "device": self.device,
+                "width": 2**8,
             }
         self.net_params = net_params
 
@@ -255,8 +263,6 @@ class RNaD:
         """
         Modify net in place to a checkpoint net from m=m, n=0
         """
-        # m is the step you are loading it from
-        # use m-1 to get net_reg_...
         if m is None:
             net.load_state_dict(self.net.state_dict())
             return
@@ -275,20 +281,20 @@ class RNaD:
     def _nash_conv(
         self,
     ):
+        """
+        This logs the depth stratified NashConv values.
+        Note: NashConv at the largest depth is for the root node, or the whole game tree
+        It is the metric of interest. The target net is used instead of the actor,
+        although that can be added if wanted. In my experience, the target is the one that converges. 
+        """
         logging.info(
             "NashConv at m: {}, n: {}, step {}".format(self.m, self.n, self.total_steps)
         )
-        # logging.info('\nnet')
-        # nash_conv_data = metric.nash_conv(self.tree, self.net)
-        # mean_nash_conv = metric.mean_nash_conv_by_depth(nash_conv_data)
-        # for depth, nash_conv in mean_nash_conv.items():
-        #     logging.info('depth:{}, nash_conv:{}'.format(depth, nash_conv))
         logging.info("\nnet target")
         nash_conv_data_target = metric.nash_conv(self.tree, self.net_target)
         mean_nash_conv_target = metric.mean_nash_conv_by_depth(nash_conv_data_target)
         for depth, nash_conv in mean_nash_conv_target.items():
             logging.info("depth:{}, nash_conv:{}".format(depth, nash_conv))
-        # self.nash_conv[self.total_steps] = (nash_conv_data.max_1 - nash_conv_data.min_2)[1].item()
         return (nash_conv_data_target.max_1 - nash_conv_data_target.min_2)[1].item()
 
     def _learn(
@@ -468,5 +474,4 @@ class RNaD:
 
 
 if __name__ == "__main__":
-
     pass
