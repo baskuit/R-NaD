@@ -16,12 +16,13 @@ By default we store game-wide tensors on cpu
 
 class NashConvData:
     def __init__(self, tree: game.Tree):
+        self.size = tree.value.shape[0]
         self.policy = torch.zeros(
-            (tree.size, 2 * tree.max_actions), device=tree.device, dtype=torch.float
+            (self.size, 2 * tree.max_actions), device=tree.device, dtype=torch.float
         )
-        self.max_1 = torch.zeros((tree.size,), device=tree.device, dtype=torch.float)
-        self.min_2 = torch.zeros((tree.size,), device=tree.device, dtype=torch.float)
-        self.depth = torch.zeros((tree.size,), device=tree.device, dtype=torch.int)
+        self.max_1 = torch.zeros((self.size,), device=tree.device, dtype=torch.float)
+        self.min_2 = torch.zeros((self.size,), device=tree.device, dtype=torch.float)
+        self.depth = torch.zeros((self.size,), device=tree.device, dtype=torch.int)
 
     def to(self, device):
         for key, value in self.__dict__.items():
@@ -34,10 +35,10 @@ def nash_conv(tree: game.Tree, net: net.ConvNet, inference_batch_size=10**5):
     data = NashConvData(tree)
 
     net.eval()
-    for _ in range(tree.size // inference_batch_size + 1):
+    for _ in range(data.size // inference_batch_size + 1):
         slice_range = torch.arange(
             _ * inference_batch_size,
-            min((_ + 1) * inference_batch_size, tree.size),
+            min((_ + 1) * inference_batch_size, data.size),
             device=tree.device,
         )
         value_slice = tree.expected_value[slice_range]
