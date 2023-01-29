@@ -215,6 +215,7 @@ class RNaD:
                 project="RNaD",
                 config={key: self.__dict__[key] for key in self.saved_keys},
             )
+            wandb.run.name = self.directory
 
     def _load_checkpoint(self, m, n):
         saved_dict = torch.load(os.path.join(self.directory, str(m), str(n)))

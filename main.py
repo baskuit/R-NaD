@@ -16,6 +16,16 @@ if __name__ == "__main__":
     call "tree.load()" instead.
 
     The project uses wandb for data visualization. It is disabled by default but recommended.
+
+    How to interpret results:
+    The objective is to minimize the exploitablity ("NashConv") of our networks policy.
+    this is defined as {p1's best response expected reward vs p2's policy} - {p2's best response expected reward vs p1's policy}.
+    Some facts about NashConv:
+    The lowest possible NashConv is 0, aka the policy is a Nash Eqilibrium.
+    The highest possible NashConv is 2, when rewards are bounded [-1, 1].
+    In general, the NashConv converges to the max value rapidly as the depth of the game increases
+
+    The original R-NaD paper achieves 
     """
 
     logging.basicConfig(level=logging.DEBUG)
@@ -40,7 +50,7 @@ if __name__ == "__main__":
     for eta in etas_to_test:
         trial = RNaD(
             tree=tree,
-            directory_name="small_tree_test_{}".format(int(time())),
+            directory_name=f"eta={eta}",
             device=tree.device,
             eta=eta,
             bounds=[
@@ -59,6 +69,6 @@ if __name__ == "__main__":
         )
 
         trial.run(
-            log_mod=1,
+            log_mod=10,
             expl_mod=1,
         )
