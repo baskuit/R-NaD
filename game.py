@@ -39,21 +39,6 @@ class Tree:
         self.depth_bound = depth_bound
         self.transition_threshold = transition_threshold
         self.terminal_values = terminal_values
-        self.row_actions_lambda = (
-            row_actions_lambda
-            if row_actions_lambda is not None
-            else lambda tree: tree.row_actions
-        )
-        self.col_actions_lambda = (
-            col_actions_lambda
-            if col_actions_lambda is not None
-            else lambda tree: tree.col_actions
-        )
-        self.depth_bound_lambda = (
-            depth_bound_lambda
-            if depth_bound_lambda is not None
-            else lambda tree: tree.depth_bound - 1
-        )
 
         value_shape = (1, max_transitions, max_actions, max_actions)
         legal_shape = (1, 1, max_actions, max_actions)
@@ -72,6 +57,24 @@ class Tree:
         self.solution = torch.zeros(nash_shape, device=device, dtype=torch.float)
         self.desc = desc
         self.hash = 0
+
+        self.saved_keys = list(self.__dict__.keys())
+
+        self.row_actions_lambda = (
+            row_actions_lambda
+            if row_actions_lambda is not None
+            else lambda tree: tree.row_actions
+        )
+        self.col_actions_lambda = (
+            col_actions_lambda
+            if col_actions_lambda is not None
+            else lambda tree: tree.col_actions
+        )
+        self.depth_bound_lambda = (
+            depth_bound_lambda
+            if depth_bound_lambda is not None
+            else lambda tree: tree.depth_bound - 1
+        )
 
     def _init_child(self):
         child = Tree(
@@ -289,19 +292,20 @@ class Tree:
         if not os.path.exists(recent_path):
             os.mkdir(recent_path)
 
-        torch.save(self.__dict__, os.path.join(recent_path, "tree.tar"))
-        torch.save(self.__dict__, os.path.join(path, "tree.tar"))
+        saved_dict = {key: self.__dict__[key] for key in self.saved_keys}
+        torch.save(saved_dict, os.path.join(recent_path, "tree.tar"))
+        torch.save(saved_dict, os.path.join(path, "tree.tar"))
         logging.info("saving trees to '{}' and 'recent'".format(path))
 
     def load(self, directory_name="recent"):
         path = os.path.join(
-            os.path.dirname(os.path.realpath(__file__)), "saved_trees", "tree.tar"
+            os.path.dirname(os.path.realpath(__file__)), "saved_trees", directory_name, "tree.tar"
         )
         logging.info("loading tree from '{}'".format(directory_name))
         dict: Dict = torch.load(path)
         for key, value in dict.items():
             self.__dict__[key] = value
-        logging.info("loaded tree has hash {}".format(self.hash.item()))
+        logging.info("loaded tree has hash {}".format(self.hash))
 
     def to(self, device):
         self.device = device
