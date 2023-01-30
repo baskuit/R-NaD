@@ -29,7 +29,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
 
     tree = Tree(
-        device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+        device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
         max_actions=3,
         max_transitions=2,
         transition_threshold=0.3,
@@ -40,10 +40,10 @@ if __name__ == "__main__":
 
     tree.generate()
     tree.assert_index_is_tree()
-    tree.save('small_tree')
+    tree.save("small_tree")
     # tree.load('small_tree')
 
-    etas_to_test = [0, .2, .5, 1]
+    etas_to_test = [0, 0.2, 0.5, 1]
     timestamp = str(int(time()))
 
     for idx, eta in enumerate(etas_to_test):
@@ -57,7 +57,6 @@ if __name__ == "__main__":
             directory_name=f"{timestamp}-eta={eta}",
             device=tree.device,
             wandb=True,
-
             eta=eta,
             bounds=[
                 64,
@@ -69,14 +68,13 @@ if __name__ == "__main__":
             gamma_averaging=0.01,
             batch_size=2**9,
             logit_clip=2,
-
             # net_params= {'type':'ConvNet','size':tree.max_actions,'channels':2**4,'depth':2,'batch_norm':True,'device':tree.device},
             net_params={"type": "MLP", "size": tree.max_actions, "width": 2**8},
         )
 
         trial.run(
             # every _ steps:
-            log_mod=10, # send wandb log
-            expl_mod=1, # calc expl
-            checkpoint_mod=1, #save nets
+            log_mod=10,  # send wandb log
+            expl_mod=1,  # calc expl
+            checkpoint_mod=1,  # save nets
         )

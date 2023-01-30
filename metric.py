@@ -149,7 +149,9 @@ def kld(
         valid_count = valid.sum().item()
     return (
         torch.where(
-            (valid.unsqueeze(-1) * legal_actions).to(torch.bool), p * (torch.log(p) - torch.log(q)), 0
+            (valid.unsqueeze(-1) * legal_actions).to(torch.bool),
+            p * (torch.log(p) - torch.log(q)),
+            0,
         )
         .sum()
         .item()

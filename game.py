@@ -299,7 +299,10 @@ class Tree:
 
     def load(self, directory_name="recent"):
         path = os.path.join(
-            os.path.dirname(os.path.realpath(__file__)), "saved_trees", directory_name, "tree.tar"
+            os.path.dirname(os.path.realpath(__file__)),
+            "saved_trees",
+            directory_name,
+            "tree.tar",
         )
         logging.info("loading tree from '{}'".format(directory_name))
         dict: Dict = torch.load(path)
