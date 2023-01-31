@@ -187,7 +187,6 @@ class Episodes:
         self.q_estimates = torch.zeros_like(self.policy)
         self.v_estimates = torch.zeros_like(self.rewards)
         self.generated = True
-        net.train()
 
     def display(
         self,

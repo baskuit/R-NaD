@@ -123,16 +123,16 @@ class RNaD:
         self.m = 0
         self.n = 0
         self.total_steps = 0  # saved in checkpoint
-        self.net: net.ConvNet = None
-        self.net_target: net.ConvNet = None
-        self.net_reg: net.ConvNet = None
-        self.net_reg_: net.ConvNet = None
+        self.net: net.Net = None
+        self.net_target: net.Net = None
+        self.net_reg: net.Net = None
+        self.net_reg_: net.Net = None
 
         self.alpha_lambda = lambda n, delta_m: 1 if n > delta_m / 2 else n * 2 / delta_m
 
     def _new_net(
         self,
-    ) -> nn.Module:
+    ) -> net.Net:
         if self.net_params["type"] == "ConvNet":
             t = net.ConvNet
         if self.net_params["type"] == "MLP":
@@ -312,6 +312,7 @@ class RNaD:
         masks = episodes.masks
         T = valid.shape[0]
 
+        self.net.train()
         logit, log_pi, pi, v = self.net.forward_batch(episodes)
         pi_processed = pi
         # pi_processed = vtrace.process_policy(pi, episodes.masks, self.n_discrete, self.epsilon_threshold) # TODO this function seems to filter masks too? ofc duh
@@ -444,7 +445,7 @@ class RNaD:
 
                 self.optimizer.step()
                 self.optimizer.zero_grad()
-                params1: Dict['str', torch.Tensor] = self.net.state_dict()
+                params1 = self.net.state_dict()
                 params2: Dict['str', torch.Tensor] = self.net_target.state_dict()
                 for name1, param1 in params1.items():
                     params2[name1].data.copy_(

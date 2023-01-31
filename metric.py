@@ -61,7 +61,6 @@ def nash_conv(tree: game.Tree, net: net.ConvNet, inference_batch_size=10**5):
     tree.to(net.device)
     data.to(net.device)
 
-    net.train()
     return data
 
 

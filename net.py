@@ -11,11 +11,24 @@ import random
 # import vtrace
 # import metric
 
-
-class MLP(nn.Module):
-    def __init__(self, size, width, device=torch.device("cpu:0"), dtype=torch.float):
+class Net(nn.Module):
+    def __init__(self, device=torch.device('cpu'), dtype=torch.float) -> None:
         super().__init__()
         self.device = device
+        self.dtype = dtype
+    
+    def forward (self,):
+        raise NotImplementedError
+
+    def forward_batch (self,):
+        raise NotImplementedError
+
+    def num_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+class MLP(Net):
+    def __init__(self, size, width, device=torch.device("cpu:0"), dtype=torch.float):
+        super().__init__(device=device, dtype=dtype)
         self.value_fc0 = nn.Linear(2 * size**2, width, device=device, dtype=dtype)
         self.value_fc1 = nn.Linear(width, 1, device=device, dtype=dtype)
         self.policy_fc0 = nn.Linear(2 * size**2, width, device=device, dtype=dtype)
@@ -144,7 +157,7 @@ class ConvResBlock(nn.Module):
         )
 
 
-class ConvNet(nn.Module):
+class ConvNet(Net):
     def __init__(
         self,
         size,
@@ -154,9 +167,7 @@ class ConvNet(nn.Module):
         device=torch.device("cpu:0"),
         dtype=torch.float,
     ):
-        super().__init__()
-        self.device = device
-        self.dtype = dtype
+        super().__init__(device=device, dtype=dtype)
         self.size = size
         self.channels = channels
         self.pre = CrossConv(
@@ -236,53 +247,3 @@ class ConvNet(nn.Module):
             torch.stack(_, dim=0)
             for _ in (logit_list, log_policy_list, policy_list, value_list)
         ]
-
-
-if __name__ == "__main__":
-
-    import game
-    import metric
-
-    def count_parameters(model):
-        return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-    def speed_test(net):
-        start_generating = time.perf_counter()
-        # Speed test
-        batch_size = 10**4
-        steps = 0
-        for trial in range(100):
-            episodes = batch.Episodes(tree, batch_size)
-            episodes.generate(net)
-            steps += episodes.t_eff * batch_size
-
-        end_generating = time.perf_counter()
-        speed = steps / (end_generating - start_generating)
-        logging.debug("{} steps/sec".format(int(speed)))
-
-    logging.basicConfig(level=logging.DEBUG)
-
-    depth_bound_lambda = lambda tree: max(
-        0, tree.depth_bound - (1 if random.random() < 0.5 else 2)
-    )
-
-    # tree = game.Tree(
-    #     max_actions=2,
-    #     depth_bound=2,
-    #     max_transitions=2,
-    #     # depth_bound_lambda=depth_bound_lambda
-    # )
-
-    # tree._generate()
-    # print('tree generated, size: ', tree.value.shape)
-    # tree.to(torch.device('cuda:0'))
-
-    # batch_size = 2**1
-    # net_channels=32
-    # net_depth=1
-    net = ConvNet(size=3, channels=2**5, depth=1, device=torch.device("cuda"))
-    net_ = MLP(size=3, width=2**8, device=torch.device("cuda"))
-    print(count_parameters(net_))
-
-    # expl = metric.nash_conv(tree, net)
-    # print(expl)
