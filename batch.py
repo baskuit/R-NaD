@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 from game import Tree
 from collections import deque
+from typing import List
 
 import time
 import random
@@ -103,7 +104,7 @@ class Episodes:
         self.v_estimates = None
 
     @classmethod
-    def collate(cls, lst: list["Episodes"]):
+    def collate(cls, lst: List["Episodes"]):
 
         t_eff = max(e.t_eff for e in lst)
         tree = lst[0].tree
