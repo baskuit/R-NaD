@@ -74,19 +74,20 @@ class Search:
         # tensors at the root, shape (1, t, a, a)
 
         subtrees = (chance > 0).nonzero()
-        for idx_flat in subtrees:
-            idx_next = index[idx_flat[0]]
+        for idx_local in subtrees:
+            idx_local = idx_local[0]
+            idx_next = index[idx_local]
             if idx_next == 0:
-                v1 = value[idx_next]
-                v2 = -value[idx_next]
+                v1 = value[idx_local]
+                v2 = -value[idx_local]
             else:
                 self.step(idx_next)
                 v1 = self.value[idx_next, 0]
                 v2 = self.value[idx_next, 1]
                 # Recursive call just before using update values
-            transition_prob = chance[idx_flat]
-            matrix_1[idx_flat] = v1 * transition_prob
-            matrix_2[idx_flat] = v2 * transition_prob
+            transition_prob = chance[idx_local]
+            matrix_1[idx_local] = v1 * transition_prob
+            matrix_2[idx_local] = v2 * transition_prob
 
         matrix_1 = matrix_1.view(self.tree.max_transitions, self.tree.max_actions, self.tree.max_actions)
         matrix_2 = matrix_2.view(self.tree.max_transitions, self.tree.max_actions, self.tree.max_actions)
@@ -94,8 +95,8 @@ class Search:
         matrix_2 = torch.sum(matrix_2, dim=0)
         # Add to get expected value estimates and reshape into matrix shape
 
-        solution_1 = self.tree._solve( matrix_1)[0]
-        solution_2 = self.tree._solve(-matrix_2)[0]
+        solution_1 = self.tree._solve( matrix_1, self.tree.max_actions)[0]
+        solution_2 = self.tree._solve(-matrix_2, self.tree.max_actions)[0]
         # Solve NE in both players search trees
 
         pi_1, pi_2 = solution_1[: self.tree.max_actions].unsqueeze(dim=0), solution_1[
@@ -104,27 +105,54 @@ class Search:
         self.value[idx_cur, 0] = torch.matmul(
             torch.matmul(pi_1, matrix_1), pi_2
         )
+        self.policy[idx_cur, : self.tree.max_actions] = torch.flatten(pi_1)
         pi_1, pi_2 = solution_2[: self.tree.max_actions].unsqueeze(dim=0), solution_2[
             self.tree.max_actions :
         ].unsqueeze(dim=1)
-        self.value[idx_cur, 1] = -torch.matmul(
+        self.value[idx_cur, 1] = torch.matmul(
             torch.matmul(pi_1, matrix_2), pi_2
         )
+        self.policy[idx_cur, self.tree.max_actions : ] = torch.flatten(pi_2)
+
         # Get payoff that serves as new values
 
 
 if __name__ == '__main__':
+    import metric
+
     tree = game.Tree(
         max_actions=2,
-        depth_bound=2,
+        max_transitions=2,
+        depth_bound=5,
     )
     tree.generate()
+
     net = net.MLP(size=tree.max_actions, width=128)
 
     search = Search(tree)
     search.apply_net(net)
-    for steps in range(3):
-        for idx, _ in enumerate(search.value):
-            print(idx, _)
+
+    for steps in range(4):
+
+        data = metric.NashConvData(tree)
+        data.policy = search.policy
+        metric.max_min(tree, data)
+        expl = (data.max_1 - data.min_2)[1].item()
+
+        print(f'step {steps}')
+        print(f'expl {expl}')
+        # for idx, _ in enumerate(search.policy):
+            # print(idx, _)
         print()
+
         search.step()
+
+    print('root')
+
+    # for _ in range(tree.value.shape[0]):
+    #     print()
+    #     print(_)
+    #     print(tree.expected_value[_])
+    #     print(tree.index[_])
+    #     print(search.policy[_])
+    #     print(search.value[_])
