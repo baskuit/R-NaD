@@ -33,9 +33,9 @@ if __name__ == "__main__":
         max_actions=3,
         max_transitions=2,
         transition_threshold=0.3,
-        depth_bound=4,
+        depth_bound=5,
         depth_bound_lambda=lambda tree: tree.depth_bound - 1 - 2 * (random() < 0.5),
-        desc="3x3 stochastic tree, with depth up to 4",
+        # desc="3x3 stochastic tree, with depth up to 5",
     )
 
     tree.generate()
@@ -43,21 +43,21 @@ if __name__ == "__main__":
     tree.save("small_tree")
     # tree.load('small_tree')
 
-    etas_to_test = [0, 0.2, 0.5, 1]
+    search_depths_to_test = [1, 0]
     timestamp = str(int(time()))
 
-    for idx, eta in enumerate(etas_to_test):
+    for idx, search_depth in enumerate(search_depths_to_test):
 
-        same_init_net = None if idx == 0 else f"{timestamp}-eta={etas_to_test[0]}"
+        same_init_net = None if idx == 0 else f"{timestamp}-search_depth={search_depths_to_test[0]}"
         # We want to use same initial net to compare. Usually I have a pre-saved run sitting around.
 
         trial = RNaD(
             same_init_net=same_init_net,
             tree=tree,
-            directory_name=f"{timestamp}-eta={eta}",
+            directory_name=f"{timestamp}-search_depth={search_depth}",
             device=tree.device,
             wandb=True,
-            eta=eta,
+            eta=search_depth,
             bounds=[
                 64,
             ],
@@ -77,4 +77,5 @@ if __name__ == "__main__":
             log_mod=10,  # send wandb log
             expl_mod=1,  # calc expl
             checkpoint_mod=1,  # save nets
+            search_depth=search_depth,
         )

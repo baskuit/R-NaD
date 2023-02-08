@@ -53,7 +53,9 @@ class Search:
                 self.policy[slice_range, self.tree.max_actions : ] = policy
                 self.value[slice_range, 1] = value[:, 0]
 
-    def step(self, idx_cur=1):
+    def step(self, idx_cur=1) -> torch.Tensor:
+
+
         matrix_1 = torch.zeros(
             (self.tree.max_transitions * self.tree.max_actions**2,),
             device=self.tree.device,
@@ -81,9 +83,9 @@ class Search:
                 v1 = value[idx_local]
                 v2 = -value[idx_local]
             else:
-                self.step(idx_next)
-                v1 = self.value[idx_next, 0]
-                v2 = self.value[idx_next, 1]
+                v1, v2 = self.step(idx_next)
+                # v1 = self.value[idx_next, 0]
+                # v2 = self.value[idx_next, 1]
                 # Recursive call just before using update values
             transition_prob = chance[idx_local]
             matrix_1[idx_local] = v1 * transition_prob
@@ -109,50 +111,51 @@ class Search:
         pi_1, pi_2 = solution_2[: self.tree.max_actions].unsqueeze(dim=0), solution_2[
             self.tree.max_actions :
         ].unsqueeze(dim=1)
+        old_value = self.value[idx_cur].clone()
         self.value[idx_cur, 1] = torch.matmul(
             torch.matmul(pi_1, matrix_2), pi_2
         )
         self.policy[idx_cur, self.tree.max_actions : ] = torch.flatten(pi_2)
-
+        return old_value
         # Get payoff that serves as new values
 
 
-if __name__ == '__main__':
-    import metric
+# if __name__ == '__main__':
+#     import metric
 
-    tree = game.Tree(
-        max_actions=2,
-        max_transitions=2,
-        depth_bound=5,
-    )
-    tree.generate()
+#     tree = game.Tree(
+#         max_actions=2,
+#         max_transitions=1,
+#         depth_bound=6,
+#     )
+#     tree.generate()
 
-    net = net.MLP(size=tree.max_actions, width=128)
+#     net = net.MLP(size=tree.max_actions, width=128)
 
-    search = Search(tree)
-    search.apply_net(net)
+#     search = Search(tree)
+#     search.apply_net(net)
 
-    for steps in range(4):
+#     for steps in range(6):
 
-        data = metric.NashConvData(tree)
-        data.policy = search.policy
-        metric.max_min(tree, data)
-        expl = (data.max_1 - data.min_2)[1].item()
+#         data = metric.NashConvData(tree)
+#         data.policy = search.policy
+#         metric.max_min(tree, data)
+#         expl = (data.max_1 - data.min_2)[1].item()
 
-        print(f'step {steps}')
-        print(f'expl {expl}')
-        # for idx, _ in enumerate(search.policy):
-            # print(idx, _)
-        print()
+#         print(f'step {steps}')
+#         print(f'expl {expl}')
+#         # for idx, _ in enumerate(search.policy):
+#             # print(idx, _)
+#         print()
 
-        search.step()
+#         search.step()
 
-    print('root')
+#     print('root')
 
-    # for _ in range(tree.value.shape[0]):
-    #     print()
-    #     print(_)
-    #     print(tree.expected_value[_])
-    #     print(tree.index[_])
-    #     print(search.policy[_])
-    #     print(search.value[_])
+#     # for _ in range(tree.value.shape[0]):
+#     #     print()
+#     #     print(_)
+#     #     print(tree.expected_value[_])
+#     #     print(tree.index[_])
+#     #     print(search.policy[_])
+#     #     print(search.value[_])

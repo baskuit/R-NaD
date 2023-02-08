@@ -405,6 +405,7 @@ class RNaD:
         checkpoint_mod=1000,
         expl_mod=1,
         log_mod=20,
+        search_depth=0,
     ) -> None:
 
         buffer = batch.Buffer(self.buffer_size)
@@ -433,7 +434,7 @@ class RNaD:
 
                 if self.total_steps % self.buffer_mod == 0:
                     episodes = batch.Episodes(self.tree, self.batch_size)
-                    episodes.generate(self.net)
+                    episodes.generate(self.net, search_depth=search_depth)
                     buffer.append(episodes)
 
                 episodes_sample = buffer.sample(self.batch_size)
@@ -462,13 +463,14 @@ class RNaD:
             self.net_reg_.load_state_dict(self.net_reg.state_dict())
             self.net_reg.load_state_dict(self.net_target.state_dict())
 
-    def run(self, max_updates=10**6, checkpoint_mod=1000, expl_mod=1, log_mod=20):
+    def run(self, max_updates=10**6, checkpoint_mod=1000, expl_mod=1, log_mod=20, search_depth=0):
         self._initialize()
         self._resume(
             max_updates=max_updates,
             checkpoint_mod=checkpoint_mod,
             expl_mod=expl_mod,
             log_mod=log_mod,
+            search_depth=search_depth,
         )
         if self.wandb:
             wandb.finish()
