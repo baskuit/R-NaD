@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import batch
+import environment.episodes as episodes
 
 import time
 import logging
@@ -44,7 +44,7 @@ class MLP(nn.Module):
         policy = torch.nn.functional.normalize(exp_logits, dim=-1, p=1)
         return policy
 
-    def forward_batch(self, episodes: batch.Episodes):
+    def forward_batch(self, episodes: episodes.Episodes):
 
         logit_list, log_policy_list, policy_list, value_list = [], [], [], []
         for t in range(0, episodes.t_eff + 1):
@@ -212,7 +212,7 @@ class ConvNet(nn.Module):
         policy = F.normalize(policy, dim=1, p=1)
         return policy
 
-    def forward_batch(self, episodes: batch.Episodes):
+    def forward_batch(self, episodes: episodes.Episodes):
 
         logit_list, log_policy_list, policy_list, value_list = [], [], [], []
         for t in range(0, episodes.t_eff + 1):
@@ -240,8 +240,8 @@ class ConvNet(nn.Module):
 
 if __name__ == "__main__":
 
-    import game
-    import metric
+    import environment.tree as tree
+    import util.metric as metric
 
     def count_parameters(model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -252,7 +252,7 @@ if __name__ == "__main__":
         batch_size = 10**4
         steps = 0
         for trial in range(100):
-            episodes = batch.Episodes(tree, batch_size)
+            episodes = episodes.Episodes(tree, batch_size)
             episodes.generate(net)
             steps += episodes.t_eff * batch_size
 

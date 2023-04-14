@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import game
-import net
+import environment.tree as tree
+import nn.net as net
 
 """
 Efficiently calculate the exploitabilty of a networks policy on a game tree
@@ -15,7 +15,7 @@ By default we store game-wide tensors on cpu
 
 
 class NashConvData:
-    def __init__(self, tree: game.Tree):
+    def __init__(self, tree: tree.Tree):
         self.size = tree.value.shape[0]
         self.policy = torch.zeros(
             (self.size, 2 * tree.max_actions), device=tree.device, dtype=torch.float
@@ -30,7 +30,7 @@ class NashConvData:
                 self.__dict__[key] = value.to(device)
 
 
-def nash_conv(tree: game.Tree, net: net.ConvNet, inference_batch_size=10**5):
+def nash_conv(tree: tree.Tree, net: net.ConvNet, inference_batch_size=10**5):
 
     data = NashConvData(tree)
 
@@ -65,7 +65,7 @@ def nash_conv(tree: game.Tree, net: net.ConvNet, inference_batch_size=10**5):
     return data
 
 
-def max_min(tree: game.Tree, data: NashConvData, root_index=1, depth=0):
+def max_min(tree: tree.Tree, data: NashConvData, root_index=1, depth=0):
 
     matrix_1 = torch.zeros(
         (tree.max_transitions * tree.max_actions**2,),
@@ -160,10 +160,10 @@ def kld(
 
 
 if __name__ == "__main__":
-    import game
-    import net
+    import environment.tree as tree
+    import nn.net as net
 
-    tree = game.Tree(
+    tree = tree.Tree(
         depth_bound=4,
         max_actions=3,
     )

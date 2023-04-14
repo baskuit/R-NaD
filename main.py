@@ -3,8 +3,8 @@ import logging
 from time import time
 from random import random
 
-from game import Tree
-from rnad import RNaD
+from environment.tree import Tree
+from learn.rnad import RNaD
 
 if __name__ == "__main__":
 

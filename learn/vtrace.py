@@ -1,9 +1,25 @@
+# Copyright 2019 DeepMind Technologies Limited
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This code was modified from the original OpenSpiel distribution 
+# to make it pytorch compatible, as it was written for Tensorflow
+
 import torch
 import functools
 import numpy as np
 
 from typing import Any, Callable, NamedTuple, Sequence, Tuple
-
 
 def process_policy(
     policy: torch.Tensor, mask: torch.Tensor, n_disc, epsilon_threshold=0.03
@@ -417,23 +433,23 @@ def get_loss_nerd(
 
 if __name__ == "__main__":
 
-    import game
-    import net
-    import batch
+    import environment.tree as tree
+    import nn.net as net
+    import environment.episodes as episodes
 
-    import rnad
+    import learn.rnad as rnad
 
-    tree = game.Tree()
+    tree = tree.Tree()
     tree.load()
 
-    episodes = batch.Episodes(tree, 1)
+    episodes = episodes.Episodes(tree, 1)
 
     net_ = net.MLP(tree.max_actions, 2**7, tree.device)
 
     episodes.generate(net_)
 
     def _learn(
-        episodes: batch.Episodes,
+        episodes: episodes.Episodes,
         alpha: float,
     ):
 

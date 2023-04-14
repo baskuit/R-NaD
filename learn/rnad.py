@@ -6,11 +6,11 @@ import logging
 import os
 import time
 
-import game
-import batch
-import net
-import vtrace
-import metric
+import environment.tree as tree
+import environment.episodes as episodes
+import nn.net as net
+import learn.vtrace as vtrace
+import util.metric as metric
 
 import wandb  # much better than usin pyplot >_>
 
@@ -31,7 +31,7 @@ class RNaD:
 
     def __init__(
         self,
-        tree: game.Tree,
+        tree: tree.Tree,
         eta=0.2,
         bounds=[
             100,
@@ -299,7 +299,7 @@ class RNaD:
 
     def _learn(
         self,
-        episodes: batch.Episodes,
+        episodes: episodes.Episodes,
         alpha: float,
         log: dict = None,
     ):
@@ -406,7 +406,7 @@ class RNaD:
         log_mod=20,
     ) -> None:
 
-        buffer = batch.Buffer(self.buffer_size)
+        buffer = episodes.Buffer(self.buffer_size)
 
         for _ in range(max_updates):
             may_resume, delta_m = self._get_update_info()
@@ -431,7 +431,7 @@ class RNaD:
                     self._save_checkpoint()
 
                 if self.total_steps % self.buffer_mod == 0:
-                    episodes = batch.Episodes(self.tree, self.batch_size)
+                    episodes = episodes.Episodes(self.tree, self.batch_size)
                     episodes.generate(self.net)
                     buffer.append(episodes)
 
