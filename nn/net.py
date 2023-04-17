@@ -11,26 +11,43 @@ import random
 # import vtrace
 # import metric
 
+"""
+As RNaD is an actor criti
+"""
 
 class MLP(nn.Module):
-    def __init__(self, size, width, device=torch.device("cpu:0"), dtype=torch.float):
+    def __init__(self, max_actions, width, device=torch.device("cpu:0"), dtype=torch.float):
+        """
+        Parallel value and policy networks
+
+        max_actions:
+            same parameter that belongs to Tree
+        width:
+            number of activations in the hidden layer of both value and policy nets
+        """
         super().__init__()
         self.device = device
-        self.value_fc0 = nn.Linear(2 * size**2, width, device=device, dtype=dtype)
+        self.value_fc0 = nn.Linear(2 * max_actions**2, width, device=device, dtype=dtype)
         self.value_fc1 = nn.Linear(width, 1, device=device, dtype=dtype)
-        self.policy_fc0 = nn.Linear(2 * size**2, width, device=device, dtype=dtype)
-        self.policy_fc1 = nn.Linear(width, size, device=device, dtype=dtype)
-        self.size = size
+        self.policy_fc0 = nn.Linear(2 * max_actions**2, width, device=device, dtype=dtype)
+        self.policy_fc1 = nn.Linear(width, max_actions, device=device, dtype=dtype)
+        self.max_actions = max_actions
         self.width = width
 
     def forward(self, input_batch):
         filter_row = input_batch[:, 1, :, 0].to(torch.bool)
-        input_batch = input_batch.view(-1, 2 * self.size**2)
+        # legal actions one hot
+        input_batch = input_batch.view(-1, 2 * self.max_actions**2)
+        # flatten observation tensor
         value = self.value_fc1(torch.relu(self.value_fc0(input_batch)))
         logits = self.policy_fc1(torch.relu(self.policy_fc0(input_batch)))
+
         exp_logits = torch.where(filter_row, torch.exp(logits), 0)
         policy = torch.nn.functional.normalize(exp_logits, dim=-1, p=1)
+        # softmax of logits over legal actions
+
         actions = torch.squeeze(torch.multinomial(policy, num_samples=1))
+        # sample action for each observation in batch
         return logits, policy, value, actions
 
     def forward_policy(self, input_batch: torch.Tensor) -> torch.Tensor:
@@ -38,7 +55,7 @@ class MLP(nn.Module):
         Does not use value head but does perform legal actions masking
         """
         filter_row = input_batch[:, 1, :, 0].to(torch.bool)
-        input_batch = input_batch.reshape(-1, 2 * self.size**2)
+        input_batch = input_batch.reshape(-1, 2 * self.max_actions**2)
         logits = self.policy_fc1(torch.relu(self.policy_fc0(input_batch)))
         exp_logits = torch.where(filter_row, torch.exp(logits), 0)
         policy = torch.nn.functional.normalize(exp_logits, dim=-1, p=1)
@@ -50,9 +67,9 @@ class MLP(nn.Module):
         for t in range(0, episodes.t_eff + 1):
             observations = episodes.observations[t]
             filter_row = observations[:, 1, :, 0].to(torch.bool)
-            observations = observations.view(-1, 2 * self.size**2)
+            observations = observations.view(-1, 2 * self.max_actions**2)
             value = self.value_fc1(torch.relu(self.value_fc0(observations)))
-            observations = observations.view(-1, 2 * self.size**2)
+            observations = observations.view(-1, 2 * self.max_actions**2)
             logits = self.policy_fc1(torch.relu(self.policy_fc0(observations)))
             exp_logits = torch.where(filter_row, torch.exp(logits), 0)
             policy = torch.nn.functional.normalize(exp_logits, dim=-1, p=1)
@@ -71,25 +88,33 @@ class MLP(nn.Module):
 class CrossConv(nn.Module):
     def __init__(
         self,
-        size,
+        max_actions,
         in_channels,
         out_channels,
         device=torch.device("cpu:0"),
         dtype=torch.float,
     ):
+        """
+        Convolutional network designed for matrix structure. (The filters are the union of a row and column)
+        max_actions:
+            same parameter that belongs to Tree
+        in_channels:
+        out_channels:
+            self explanatory
+        """
         super().__init__()
-        self.size = size
+        self.max_actions = max_actions
         self.row_conv = nn.Conv2d(
             in_channels,
             out_channels,
-            kernel_size=(1, 2 * size - 1),
+            kernel_size=(1, 2 * max_actions - 1),
             device=device,
             dtype=dtype,
         )
         self.col_conv = nn.Conv2d(
             in_channels,
             out_channels,
-            kernel_size=(2 * size - 1, 1),
+            kernel_size=(2 * max_actions - 1, 1),
             device=device,
             dtype=dtype,
         )
@@ -98,8 +123,8 @@ class CrossConv(nn.Module):
         x = F.pad(
             input,
             (
-                self.size - 1,
-                self.size - 1,
+                self.max_actions - 1,
+                self.max_actions - 1,
                 0,
                 0,
             ),
@@ -110,8 +135,8 @@ class CrossConv(nn.Module):
             (
                 0,
                 0,
-                self.size - 1,
-                self.size - 1,
+                self.max_actions - 1,
+                self.max_actions - 1,
             ),
         )
         c = self.col_conv(y)
@@ -121,15 +146,18 @@ class CrossConv(nn.Module):
 class ConvResBlock(nn.Module):
     def __init__(
         self,
-        size,
+        max_actions,
         channels,
         batch_norm=False,
         device=torch.device("cpu:0"),
         dtype=torch.float,
     ):
         super().__init__()
-        self.conv0 = CrossConv(size, channels, channels, device=device, dtype=dtype)
-        self.conv1 = CrossConv(size, channels, channels, device=device, dtype=dtype)
+        """
+        Residual block for CrossConv (same structure as normal resblock)
+        """
+        self.conv0 = CrossConv(max_actions, channels, channels, device=device, dtype=dtype)
+        self.conv1 = CrossConv(max_actions, channels, channels, device=device, dtype=dtype)
         self.relu = torch.relu
         if batch_norm:
             self.batch_norm0 = nn.BatchNorm2d(channels, device=device, dtype=dtype)
@@ -147,7 +175,7 @@ class ConvResBlock(nn.Module):
 class ConvNet(nn.Module):
     def __init__(
         self,
-        size,
+        max_actions,
         channels,
         depth=1,
         batch_norm=True,
@@ -155,17 +183,20 @@ class ConvNet(nn.Module):
         dtype=torch.float,
     ):
         super().__init__()
+        """
+        Two headed convolutional tower (i.e. AlphaZero)
+        """
         self.device = device
         self.dtype = dtype
-        self.size = size
+        self.max_actions = max_actions
         self.channels = channels
         self.pre = CrossConv(
-            size, in_channels=2, out_channels=channels, device=device, dtype=dtype
+            max_actions, in_channels=2, out_channels=channels, device=device, dtype=dtype
         )
         self.tower = nn.ParameterList(
             [
                 ConvResBlock(
-                    size=size,
+                    max_actions=max_actions,
                     channels=channels,
                     batch_norm=batch_norm,
                     device=device,
@@ -175,9 +206,9 @@ class ConvNet(nn.Module):
             ]
         )
         self.policy = nn.Linear(
-            channels * (size**2), size, device=device, dtype=dtype
+            channels * (max_actions**2), max_actions, device=device, dtype=dtype
         )
-        self.value = nn.Linear(channels * (size**2), 1, device=device, dtype=dtype)
+        self.value = nn.Linear(channels * (max_actions**2), 1, device=device, dtype=dtype)
 
     def forward(self, input_batch):
         filter_row = input_batch[:, 1, :, 0]
@@ -186,7 +217,7 @@ class ConvNet(nn.Module):
         for block in self.tower:
             x = block.forward(x)
 
-        x = x.view(-1, self.channels * (self.size**2))
+        x = x.view(-1, self.channels * (self.max_actions**2))
         logits = self.policy(x)
         policy = F.softmax(logits, dim=1)
         policy *= filter_row
@@ -205,7 +236,7 @@ class ConvNet(nn.Module):
         for block in self.tower:
             x = block(x)
 
-        x = x.view(-1, self.channels * (self.size**2))
+        x = x.view(-1, self.channels * (self.max_actions**2))
         logits = self.policy(x)
         policy = F.softmax(logits, dim=1)
         policy *= filter_row
@@ -220,7 +251,7 @@ class ConvNet(nn.Module):
             x = self.pre(observations)
             for block in self.tower:
                 x = block(x)
-            x = x.view(-1, self.channels * (self.size**2))
+            x = x.view(-1, self.channels * (self.max_actions**2))
             logits = self.policy(x)
             filter_row = observations[:, 1, :, 0].to(torch.bool)
             exp_logits = torch.where(filter_row, torch.exp(logits), 0)
@@ -265,7 +296,6 @@ if __name__ == "__main__":
     depth_bound_lambda = lambda tree: max(
         0, tree.depth_bound - (1 if random.random() < 0.5 else 2)
     )
-
     # tree = game.Tree(
     #     max_actions=2,
     #     depth_bound=2,
@@ -280,7 +310,7 @@ if __name__ == "__main__":
     # batch_size = 2**1
     # net_channels=32
     # net_depth=1
-    net = ConvNet(size=3, channels=2**5, depth=1, device=torch.device("cuda"))
+    net = ConvNet(max_actions=3, channels=2**5, depth=1, device=torch.device("cuda"))
     net_ = MLP(size=3, width=2**8, device=torch.device("cuda"))
     print(count_parameters(net_))
 
