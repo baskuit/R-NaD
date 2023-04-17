@@ -395,7 +395,7 @@ class Tree:
             raise Exception("Attempting to save non-root tree")
 
         directory = os.path.join(
-            os.path.dirname(os.path.realpath(__file__)), "saved_trees"
+            os.path.dirname(os.path.realpath(__file__)), "..", "saved_trees"
         )
         if not os.path.exists(directory):
             os.mkdir(directory)
@@ -421,6 +421,7 @@ class Tree:
         """
         path = os.path.join(
             os.path.dirname(os.path.realpath(__file__)),
+            "..",
             "saved_trees",
             directory_name,
             "tree.tar",

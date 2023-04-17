@@ -56,7 +56,7 @@ if __name__ == "__main__":
             tree=tree,
             directory_name=f"{timestamp}-eta={eta}",
             device=tree.device,
-            wandb=True,
+            wandb=False,
             eta=eta,
             bounds=[
                 64,
@@ -69,7 +69,7 @@ if __name__ == "__main__":
             batch_size=2**9,
             logit_clip=2,
             # net_params= {'type':'ConvNet','size':tree.max_actions,'channels':2**4,'depth':2,'batch_norm':True,'device':tree.device},
-            net_params={"type": "MLP", "size": tree.max_actions, "width": 2**8},
+            net_params={"type": "MLP", "max_actions": tree.max_actions, "width": 2**8},
         )
 
         trial.run(

@@ -435,21 +435,21 @@ if __name__ == "__main__":
 
     import environment.tree as tree
     import nn.net as net
-    import environment.episodes as episodes
+    import environment.episode as episode
 
     import learn.rnad as rnad
 
     tree = tree.Tree()
     tree.load()
 
-    episodes = episodes.Episodes(tree, 1)
+    episode = episode.Episodes(tree, 1)
 
     net_ = net.MLP(tree.max_actions, 2**7, tree.device)
 
-    episodes.generate(net_)
+    episode.generate(net_)
 
     def _learn(
-        episodes: episodes.Episodes,
+        episodes: episode.Episodes,
         alpha: float,
     ):
 
@@ -497,4 +497,4 @@ if __name__ == "__main__":
         print(v_target_list[0])
         print(v_target_list[1])
 
-    _learn(episodes, 1)
+    _learn(episode, 1)

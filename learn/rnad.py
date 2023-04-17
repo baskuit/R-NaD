@@ -7,7 +7,7 @@ import os
 import time
 
 import environment.tree as tree
-import environment.episodes as episodes
+import environment.episode as episode
 import nn.net as net
 import learn.vtrace as vtrace
 import util.metric as metric
@@ -101,7 +101,7 @@ class RNaD:
         if net_params is None:
             net_params = {
                 "type": "MLP",
-                "size": self.tree.max_actions,
+                "max_actions": self.tree.max_actions,
                 "width": 2**8,
             }
         self.net_params = net_params
@@ -111,12 +111,12 @@ class RNaD:
         #### #### #### ####
         self.device = device
         saved_runs_dir = os.path.join(
-            os.path.dirname(os.path.realpath(__file__)), "saved_runs"
+            os.path.dirname(os.path.realpath(__file__)), "..", "saved_runs"
         )
         if not os.path.exists(saved_runs_dir):
             os.mkdir(saved_runs_dir)
         self.directory = os.path.join(
-            os.path.dirname(os.path.realpath(__file__)), "saved_runs", directory_name
+            os.path.dirname(os.path.realpath(__file__)), "..", "saved_runs", directory_name
         )
         self.same_init_net = same_init_net
 
@@ -167,6 +167,7 @@ class RNaD:
             if self.same_init_net:
                 net_dir = os.path.join(
                     os.path.dirname(os.path.realpath(__file__)),
+                    "..",
                     "saved_runs",
                     self.same_init_net,
                     "0",
@@ -299,7 +300,7 @@ class RNaD:
 
     def _learn(
         self,
-        episodes: episodes.Episodes,
+        episodes: episode.Episodes,
         alpha: float,
         log: dict = None,
     ):
@@ -405,9 +406,8 @@ class RNaD:
         expl_mod=1,
         log_mod=20,
     ) -> None:
-
-        buffer = episodes.Buffer(self.buffer_size)
-
+        
+        buffer = episode.Buffer(self.buffer_size)
         for _ in range(max_updates):
             may_resume, delta_m = self._get_update_info()
             
@@ -431,7 +431,7 @@ class RNaD:
                     self._save_checkpoint()
 
                 if self.total_steps % self.buffer_mod == 0:
-                    episodes = episodes.Episodes(self.tree, self.batch_size)
+                    episodes = episode.Episodes(self.tree, self.batch_size)
                     episodes.generate(self.net)
                     buffer.append(episodes)
 

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import environment.episodes as episodes
+import environment.episode as episode
 
 import time
 import logging
@@ -61,7 +61,7 @@ class MLP(nn.Module):
         policy = torch.nn.functional.normalize(exp_logits, dim=-1, p=1)
         return policy
 
-    def forward_batch(self, episodes: episodes.Episodes):
+    def forward_batch(self, episodes: episode.Episodes):
 
         logit_list, log_policy_list, policy_list, value_list = [], [], [], []
         for t in range(0, episodes.t_eff + 1):
@@ -243,7 +243,7 @@ class ConvNet(nn.Module):
         policy = F.normalize(policy, dim=1, p=1)
         return policy
 
-    def forward_batch(self, episodes: episodes.Episodes):
+    def forward_batch(self, episodes: episode.Episodes):
 
         logit_list, log_policy_list, policy_list, value_list = [], [], [], []
         for t in range(0, episodes.t_eff + 1):
