@@ -7,6 +7,11 @@ The repo is an implementation of DeepMind's R-NaD algorithm on a class of extrem
 
 Using this platform, anyone with a reasonably powered PC can experiment with the algorithm.
 
+## Setup
+
+    pip3 install -r requirements.txt
+    python3 main.py
+
 # R-NaD
 
 Introduced here:
