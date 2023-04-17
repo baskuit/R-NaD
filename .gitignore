@@ -2,3 +2,4 @@
 /saved_trees
 /saved_runs
 /wandb
+*.pyc
