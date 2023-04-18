@@ -5,24 +5,42 @@ import torch.nn.functional as F
 import environment.tree as tree
 import nn.net as net
 
-"""
-Efficiently calculate the exploitabilty of a networks policy on a game tree
-root_index is the matrix in tree.expected_value for which to compute expoloitability
-inference_batch_size is for splitting very large games into chunks that fit into GPU memory
-
-By default we store game-wide tensors on cpu
-"""
-
+from typing import Dict, List
 
 class NashConvData:
+
+    """
+    Efficiently calculate the exploitabilty of a networks policy on a game tree
+    root_index is the matrix in tree.expected_value for which to compute expoloitability
+    inference_batch_size is for splitting very large games into chunks that fit into GPU memory
+
+    By default we store game-wide tensors on cpu
+    """
+
     def __init__(self, tree: tree.Tree):
         self.size = tree.value.shape[0]
-        self.policy = torch.zeros(
+        self.joint_policy = torch.zeros(
             (self.size, 2 * tree.max_actions), device=tree.device, dtype=torch.float
         )
-        self.max_1 = torch.zeros((self.size,), device=tree.device, dtype=torch.float)
-        self.min_2 = torch.zeros((self.size,), device=tree.device, dtype=torch.float)
+        self.row_best = torch.zeros((self.size,), device=tree.device, dtype=torch.float)
+        self.col_best = torch.zeros((self.size,), device=tree.device, dtype=torch.float)
+        self.reach_probability = torch.zeros((self.size,), device=tree.device, dtype=torch.float)
         self.depth = torch.zeros((self.size,), device=tree.device, dtype=torch.int)
+
+        """
+        joint_policy:
+            The entire tree is inferenced and the policy for both players is stored here
+        row_best:
+            Assuming the column player is playing the network's strategy, this value is the expected payoff it can achieve if it plays a maximally exploiting strategy from this state onwards
+        col_best:
+            Likewise.
+        reach_probablity:
+            The probabilty of reaching a given state using the joint policy.
+        depth:
+            The longest distance to a terminal node from this state.
+            While the NashConv for the game is simply that of the root state, we can also calculate the NashConv of every state since we store values for the entire tree.
+            Then we can calculate the average NashConv for states of any given depth.
+        """
 
     def to(self, device):
         for key, value in self.__dict__.items():
@@ -30,112 +48,146 @@ class NashConvData:
                 self.__dict__[key] = value.to(device)
 
 
-def nash_conv(tree: tree.Tree, net: net.ConvNet, inference_batch_size=10**5):
+    def get_nashconv_from_net(
+        self, 
+        tree: tree.Tree, 
+        net: net.ConvNet, 
+        inference_batch_size: int=10**5
+    ) -> None:
 
-    data = NashConvData(tree)
+        net.eval()
 
-    net.eval()
-    for _ in range(data.size // inference_batch_size + 1):
-        slice_range = torch.arange(
-            _ * inference_batch_size,
-            min((_ + 1) * inference_batch_size, data.size),
+        for _ in range(self.size // inference_batch_size + 1):
+            slice_range = torch.arange(
+                _ * inference_batch_size,
+                min((_ + 1) * inference_batch_size, self.size),
+                device=tree.device,
+            )
+            value_slice = tree.expected_value[slice_range]
+            legal_slice = tree.legal[slice_range]
+
+            with torch.no_grad():
+
+                observation = torch.cat([value_slice, legal_slice], dim=1)
+                self.joint_policy[slice_range, : tree.max_actions] = net.forward_policy(
+                    observation
+                )
+                # row player
+                observation = torch.cat([-value_slice, legal_slice], dim=1).swapaxes(
+                    2, 3
+                )
+                self.joint_policy[slice_range, tree.max_actions :] = net.forward_policy(
+                    observation
+                )
+                # column player
+
+        tree.to(torch.device("cpu"))
+        self.to(torch.device("cpu"))
+        self.get_nashconv(tree, self.joint_policy)
+        tree.to(net.device)
+        self.to(net.device)
+
+        net.train()
+
+
+    def get_nashconv(
+        self, 
+        tree: tree.Tree, 
+        joint_policy: torch.Tensor,
+        state_index: int=1,
+        reach_probablity: float=1,
+        depth: int=0
+    ) -> None:
+        
+        """
+        Calculate the NashConv of a joint policy with shape=(size, max_actions * 2)
+        """
+
+        row_best_case_matrix = torch.zeros(
+            (tree.max_transitions * tree.max_actions**2,),
             device=tree.device,
+            dtype=torch.float,
         )
-        value_slice = tree.expected_value[slice_range]
-        legal_slice = tree.legal[slice_range]
+        col_best_case_matrix = torch.zeros(
+            (tree.max_transitions * tree.max_actions**2,),
+            device=tree.device,
+            dtype=torch.float,
+        )
 
-        with torch.no_grad():
-            inference_slice = torch.cat([value_slice, legal_slice], dim=1)
-            data.policy[slice_range, : tree.max_actions] = net.forward_policy(
-                inference_slice
-            )
-            inference_slice = torch.cat([-value_slice, legal_slice], dim=1).swapaxes(
-                2, 3
-            )
-            data.policy[slice_range, tree.max_actions :] = net.forward_policy(
-                inference_slice
-            )
-    tree.to(torch.device("cpu"))
-    data.to(torch.device("cpu"))
-    max_min(tree, data)
-    tree.to(net.device)
-    data.to(net.device)
+        pi = joint_policy[state_index]
+        pi_row = pi[: tree.max_actions].unsqueeze(dim=0)
+        pi_col = pi[tree.max_actions :].unsqueeze(dim=1)
 
-    net.train()
-    return data
+        value_root = torch.flatten(
+            tree.value[state_index : state_index + 1]
+        )  # (1, n_trans, max_actions, max_actions)
+        index_root = torch.flatten(
+            tree.index[state_index : state_index + 1]
+        )  # (1, n_trans, max_actions, max_actions)
+        chance_root = torch.flatten(
+            tree.chance[state_index : state_index + 1]
+        )
+        joint_policy_matrix_flat = torch.flatten(
+            torch.matmul(pi_col, pi_row)
+        ).repeat(tree.chance.shape[1])
 
+        children = (chance_root > 0).nonzero()
+        depths: List[int] = []
+        for idx_flat in children:
+            # idx_flat is not the tree index, but rather the index of flattened tensor
 
-def max_min(tree: tree.Tree, data: NashConvData, root_index=1, depth=0):
+            transition_prob = chance_root[idx_flat]
+            child_index = index_root[idx_flat].item()
+            if child_index == 0:
 
-    matrix_1 = torch.zeros(
-        (tree.max_transitions * tree.max_actions**2,),
-        device=tree.device,
-        dtype=torch.float,
-    )
-    matrix_2 = torch.zeros(
-        (tree.max_transitions * tree.max_actions**2,),
-        device=tree.device,
-        dtype=torch.float,
-    )
+                v = value_root[idx_flat]
+                row_b, col_b = v, -v
 
-    value_root = torch.flatten(
-        tree.value[root_index : root_index + 1]
-    )  # (1, n_trans, max_actions, max_actions)
-    index_root = torch.flatten(
-        tree.index[root_index : root_index + 1]
-    )  # (1, n_trans, max_actions, max_actions)
-    chance_root = torch.flatten(
-        tree.chance[root_index : root_index + 1]
-        * tree.legal[root_index : root_index + 1]
-    )
+            else:
 
-    places = (chance_root > 0).nonzero()
-    depths = [0]
-    for idx_flat in places:
+                self.get_nashconv(
+                    tree, 
+                    self.joint_policy, 
+                    state_index=child_index, 
+                    reach_probablity=reach_probablity * joint_policy_matrix_flat[idx_flat] * transition_prob, 
+                    depth=depth + 1,
+                )
+                row_b = self.row_best[child_index]
+                col_b = self.col_best[child_index]
+                depths.append(self.depth[child_index])
 
-        transition_prob = chance_root[idx_flat]
-        root_index_ = index_root[idx_flat[0]]
-        if root_index_ == 0:
-            v = value_root[idx_flat]
-            max_1_, min_2_ = v, v
-        else:
-            max_min(tree, data, root_index_, depth=depth + 1)
-            max_1_ = data.max_1[root_index_]
-            min_2_ = data.min_2[root_index_]
-            depths.append(data.depth[root_index_])
-        matrix_1[idx_flat] = max_1_ * transition_prob
-        matrix_2[idx_flat] = min_2_ * transition_prob
+            row_best_case_matrix[idx_flat] = row_b * transition_prob
+            col_best_case_matrix[idx_flat] = col_b * transition_prob
 
-    matrix_1 = matrix_1.view(tree.max_transitions, tree.max_actions, tree.max_actions)
-    matrix_2 = matrix_2.view(tree.max_transitions, tree.max_actions, tree.max_actions)
-    matrix_1 = torch.sum(matrix_1, dim=0)
-    matrix_2 = torch.sum(matrix_2, dim=0)
+        row_best_case_matrix = row_best_case_matrix.view(tree.max_transitions, tree.max_actions, tree.max_actions)
+        col_best_case_matrix = col_best_case_matrix.view(tree.max_transitions, tree.max_actions, tree.max_actions)
+        row_best_case_matrix = torch.sum(row_best_case_matrix, dim=0)
+        col_best_case_matrix = torch.sum(col_best_case_matrix, dim=0)
 
-    pi = data.policy[root_index]
-    pi_1, pi_2 = pi[: tree.max_actions].unsqueeze(dim=0), pi[
-        tree.max_actions :
-    ].unsqueeze(dim=1)
-    row_actions_mask = tree.legal[root_index, 0, :, 0].to(torch.bool)
-    col_actions_mask = tree.legal[root_index, 0, 0, :].to(torch.bool)
-    prod_1 = torch.flatten(torch.matmul(matrix_1, pi_2))[row_actions_mask]
-    prod_2 = torch.flatten(torch.matmul(pi_1, matrix_2))[col_actions_mask]
-    data.max_1[root_index] = torch.max(prod_1)
-    data.min_2[root_index] = torch.min(prod_2)
+        row_actions_mask = tree.legal[state_index, 0, :, 0].to(torch.bool)
+        col_actions_mask = tree.legal[state_index, 0, 0, :].to(torch.bool)
+        row_responses = torch.flatten(torch.matmul(row_best_case_matrix, pi_col))[row_actions_mask]
+        col_responses = torch.flatten(torch.matmul(pi_row, col_best_case_matrix))[col_actions_mask]
 
-    depth = 1 + max(depths)
-    data.depth[root_index] = depth
+        self.row_best[state_index] = torch.max(row_responses)
+        self.col_best[state_index] = torch.max(col_responses)
+        self.reach_probability[state_index] = reach_probablity
+        self.depth[state_index] = 1 + max(depths, default=0)
 
 
-def mean_nash_conv_by_depth(data: NashConvData):
+    def mean_nashconv_by_depth(self,) -> Dict[int, float]:
 
-    max_depth = int(data.depth[1].item())
-    nash_conv = data.max_1 - data.min_2
-    means = {}
-    for depth in range(1, max_depth + 1):
-        idx = data.depth == depth
-        expls = nash_conv[idx]
-        means[depth] = torch.mean(expls).item()
-    return means
+        max_depth = int(self.depth[1].item())
+        nashconv = self.row_best + self.col_best
+        # This exploits the fact that the game is zero-sum
+        # Otherwise the calculcation is a tiny bit more involved
+
+        means: Dict[int ,float] = {}
+        for depth in range(1, max_depth + 1):
+            idx = self.depth == depth
+            expls = nashconv[idx]
+            means[depth] = torch.mean(expls).item()
+        return means
 
 
 def kld(

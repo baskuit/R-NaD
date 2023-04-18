@@ -331,11 +331,11 @@ class RNaD:
         idx = min(bounding_indices)
         return True, self.delta_m[idx]
 
-    def __nash_conv(self,):
+    def __nashconv(self,) -> float:
         
         """
-        This logs the depth stratified NashConv values.
-        Note: NashConv at the largest depth is for the root node, or the whole game tree
+        Returns the NashConv at the root and logs the depth stratified NashConv values.
+        Note: NashConv at the largest depth is for the root node/the whole game tree
         This is the metric of primary interest. The target net is used instead of the actor,
         although that can be added if wanted. In my experience, the target is the one that converges. 
         """
@@ -343,11 +343,12 @@ class RNaD:
         logging.info(
             "NashConv at m: {}, n: {}, step {}".format(self.m, self.n, self.total_steps)
         )
-        nash_conv_data_target = metric.nash_conv(self.tree, self.net_target)
-        mean_nash_conv_target = metric.mean_nash_conv_by_depth(nash_conv_data_target)
-        for depth, nash_conv in mean_nash_conv_target.items():
-            logging.info("depth:{}, nash_conv:{}".format(depth, nash_conv))
-        return (nash_conv_data_target.max_1 - nash_conv_data_target.min_2)[1].item()
+        nashconv_data = metric.NashConvData(self.tree)
+        nashconv_data.get_nashconv_from_net(self.tree, self.net_target)
+        mean_nashconv: Dict[int, float] = nashconv_data.mean_nashconv_by_depth()
+        for depth, nashconv in mean_nashconv.items():
+            logging.info("depth:{}, nash_conv:{}".format(depth, nashconv))
+        return (nashconv_data.row_best[1] - nashconv_data.col_best[1]).item()
 
     def __learn(
         self,
@@ -487,9 +488,9 @@ class RNaD:
             buffer.max_size = self.n_batches_per_buffer
 
             if self.m % expl_mod == 0 and self.n == 0 and self.m != 0:
-                nash_conv = self.__nash_conv()
+                nashconv = self.__nashconv()
                 if self.wandb:
-                    wandb.log({"nash_conv": nash_conv}, step=self.total_steps)
+                    wandb.log({"nash_conv": nashconv}, step=self.total_steps)
 
             while self.n < delta_m:
 
