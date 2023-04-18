@@ -157,29 +157,3 @@ def kld(
         .item()
         / valid_count
     )
-
-
-if __name__ == "__main__":
-    import environment.tree as tree
-    import nn.net as net
-
-    tree = tree.Tree(
-        depth_bound=4,
-        max_actions=3,
-    )
-    # tree.load('1667264620')
-    tree.generate()
-    tree.assert_index_is_tree()
-    net_ = net.ConvNet(tree.max_actions, 1, 1)
-
-    # pi = tree.nash
-    # data = NashConvData(tree)
-    # data.policy = pi
-    # print(tree.chance.dtype)
-    # max_min(tree, data)
-    # print(data.max_1[1] - data.min_2[1])
-
-    data = nash_conv(tree, net_)
-    means = mean_nash_conv_by_depth(data)
-    for _, __ in means.items():
-        print(_, __)

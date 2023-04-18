@@ -332,23 +332,3 @@ class Buffer:
         self,
     ):
         self.episodes_buffer.clear()
-
-
-# if __name__ == "__main__":
-#     import environment.tree as tree
-#     import nn.net as net
-
-#     tree = tree.Tree()
-#     tree.load("recent")
-#     net_ = net.MLP(size=tree.max_actions, width=1)
-#     buffer = Buffer(
-#         8,
-#     )
-
-#     for _ in range(10):
-#         episodes = Episodes(tree, 2)
-#         episodes.generate(net_)
-#         buffer.append(episodes)
-
-#     episodes_ = buffer.sample(10)
-#     print(episodes_)

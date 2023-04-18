@@ -440,32 +440,3 @@ class Tree:
         for key, value in self.__dict__.items():
             if torch.is_tensor(value):
                 self.__dict__[key] = value.to(device)
-
-
-if __name__ == "__main__":
-    # Build tree and test if index
-
-    logging.basicConfig(level=logging.DEBUG)
-
-    tree = Tree(
-        max_actions=2,
-        max_transitions=2,
-        transition_threshold=0.4,
-        # row_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
-        # col_actions_lambda=lambda tree:tree.row_actions - 1 * (random.random() < .2),
-        # row_actions_lambda=lambda tree:3,
-        # col_actions_lambda=lambda tree:3,
-        # row_actions=2,
-        # col_actions=2,
-        depth_bound_lambda=lambda tree: tree.depth_bound
-        - 1
-        - 2 * (random.random() < 0.5),
-        # depth_bound_lambda=lambda tree:tree.depth_bound - 2,
-        depth_bound=5,
-        # desc='3x3 but 2x2 at root'
-    )
-
-    tree.generate()
-    for _ in tree.index:
-        print(_)
-    tree.assert_index_is_tree()
