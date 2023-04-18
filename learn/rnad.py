@@ -462,6 +462,19 @@ class RNaD:
         log_mod=20,
     ) -> None:
         
+        """
+        Resumes training loop. Terminates when schedule is completed or when max_updates is reached.
+
+        max_updates:
+            The max number of updates. Allows partial runs without having to use a short schedule.
+        checkpoint_mod:
+            Saves a checkpoint after this many steps, always starting at m=0.
+        expl_mod:
+            Compute NashConv of the target net after this many steps, starting at m=0.
+        log_mod:
+            Compute logs during learning after this many steps, starting at m=0. 
+        """
+        
         buffer = episode.Buffer(self.n_batches_per_buffer)
         for _ in range(max_updates):
             may_resume, delta_m = self.__get_update_info()
@@ -517,6 +530,11 @@ class RNaD:
             self.net_reg.load_state_dict(self.net_target.state_dict())
 
     def run(self, max_updates=10**6, checkpoint_mod=1000, expl_mod=1, log_mod=20):
+
+        """
+        Either starts or resumes a run.
+        """
+
         self.__initialize()
         self.__resume(
             max_updates=max_updates,
