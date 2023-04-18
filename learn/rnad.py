@@ -22,7 +22,7 @@ class RNaD:
     Calling "run" on an RNaD object will automaticlly create a folder with its 'directory_name' in the saved_runs directory.
     There a 'params' object will be saved together with the initial network weights ('checkpoint') at n=0, m=0.
     
-    During its run, the RNaD object will periodically save checkpoint info at update n, step m in 'm.tar' in the directory 'saved_runs/directory_name/n'.
+    During its run, the RNaD object will periodically save checkpoint info at update n, step m in 'm' in the directory 'saved_runs/directory_name/n'.
     If the run is ended prematurely, the next time 'run' is called the object will look in 'saved_runs/directory_name' to find the latest checkpoint and automatically resume from there.
     Its associated wandb run will also be resumed.
 
@@ -217,7 +217,7 @@ class RNaD:
                     "saved_runs",
                     self.use_same_init_net_as,
                     "0",
-                    "0.tar",
+                    "0",
                 )
                 checkpoint = torch.load(net_dir)
                 self.net.load_state_dict(checkpoint["net"])
@@ -285,7 +285,7 @@ class RNaD:
         Updates the net weights, optimizer state, and certain stat members from those saved in the checkpoint
         """
 
-        saved_dict = torch.load(os.path.join(self.directory, str(m), "{}.tar".format(str(n))))
+        saved_dict = torch.load(os.path.join(self.directory, str(m), str(n)))
         self.total_steps = saved_dict["total_steps"]
         self.net_params = saved_dict["net_params"]
         self.net = self.__new_net()
