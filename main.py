@@ -52,7 +52,7 @@ if __name__ == "__main__":
         # We want to use same initial net to compare. Usually I have a pre-saved run sitting around.
 
         trial = RNaD(
-            same_init_net=same_init_net,
+            use_same_init_net_as=same_init_net,
             tree=tree,
             directory_name=f"{timestamp}-eta={eta}",
             device=tree.device,

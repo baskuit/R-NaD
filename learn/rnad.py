@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import logging
 import os
 import time
+from typing import Dict
 
 import environment.tree as tree
 import environment.episode as episode
@@ -12,26 +13,20 @@ import nn.net as net
 import learn.vtrace as vtrace
 import util.metric as metric
 
-import wandb  # much better than usin pyplot >_>
-
-from typing import Dict
-
+import wandb
 
 class RNaD:
 
     """
-    Most of these params are found in the paper.
-    
-    "bounds" and "delta_m" set the regularization net update schedule.
-    The default values describe the ones from the paper, which should explain how they work.
-
-    "buffer_size" and "buffer_mod" are used to simulate a replay buffer.
-    The default values are equivalent to using a fresh batch each step.
+    Represents a run of the RNaD algorithm on a given game Tree.
     """
 
     def __init__(
         self,
         tree: tree.Tree,
+        device=torch.device("cuda"),
+
+        batch_size=3 * 2**8,
         eta=0.2,
         bounds=[
             100,
@@ -43,8 +38,6 @@ class RNaD:
             100_000,
             35_000,
         ],
-        buffer_size=1,  # This simulates no buffer
-        buffer_mod=1,  # How many steps to grab new batch
         lr=5 * 10**-5,
         logit_clip=2,
         neurd_clip=10**3,
@@ -55,26 +48,29 @@ class RNaD:
         gamma_averaging=0.001,
         roh_bar=1,
         c_bar=1,
-        batch_size=3 * 2**8,
         epsilon_threshold=0.03,
         n_discrete=32,
-        device=torch.device("cuda"),
+        # parameters from https://arxiv.org/abs/2206.15378
+
+        n_batches_per_buffer=1,  # This simulates no buffer
+        buffer_mod=1,  # How many steps to grab new batch
         directory_name=None,
         net_params=None,
         vtrace_gamma=1,
         value_loss_weight=1,
         neurd_loss_weight=1,
         wandb=False,
-        same_init_net=False,
+        use_same_init_net_as=False,
     ):
 
         self.tree = tree
         self.tree_hash = 0
+        self.device = device
 
         self.eta = eta
         self.bounds = bounds
         self.delta_m = delta_m
-        self.buffer_size = buffer_size
+        self.n_batches_per_buffer = n_batches_per_buffer
         self.buffer_mod = buffer_mod
         self.lr = lr
         self.beta = logit_clip
@@ -106,10 +102,9 @@ class RNaD:
             }
         self.net_params = net_params
 
-        #### #### #### ####
         self.saved_keys = [key for key in self.__dict__.keys() if key != "tree"]
-        #### #### #### ####
-        self.device = device
+        # only the above members are saved in and reloaded from the 'params' object
+
         saved_runs_dir = os.path.join(
             os.path.dirname(os.path.realpath(__file__)), "..", "saved_runs"
         )
@@ -118,7 +113,7 @@ class RNaD:
         self.directory = os.path.join(
             os.path.dirname(os.path.realpath(__file__)), "..", "saved_runs", directory_name
         )
-        self.same_init_net = same_init_net
+        self.use_same_init_net_as = use_same_init_net_as
 
         self.m = 0
         self.n = 0
@@ -130,7 +125,7 @@ class RNaD:
 
         self.alpha_lambda = lambda n, delta_m: 1 if n > delta_m / 2 else n * 2 / delta_m
 
-    def _new_net(
+    def __new_net(
         self,
     ) -> nn.Module:
         if self.net_params["type"] == "ConvNet":
@@ -143,7 +138,7 @@ class RNaD:
         new_net.eval()
         return new_net
 
-    def _initialize(self):
+    def __initialize(self):
 
         logging.info("Initializing R-NaD run: {}".format(self.directory_name))
 
@@ -162,25 +157,25 @@ class RNaD:
             torch.save(params_dict, os.path.join(self.directory, "params"))
 
             os.mkdir(os.path.join(self.directory, "0"))
-            self.net = self._new_net()
+            self.net = self.__new_net()
             self.net.train()
-            if self.same_init_net:
+            if self.use_same_init_net_as:
                 net_dir = os.path.join(
                     os.path.dirname(os.path.realpath(__file__)),
                     "..",
                     "saved_runs",
-                    self.same_init_net,
+                    self.use_same_init_net_as,
                     "0",
                     "0",
                 )
                 checkpoint = torch.load(net_dir)
                 self.net.load_state_dict(checkpoint["net"])
-                logging.info("Loading init net from {}".format(self.same_init_net))
-            self.net_target = self._new_net()
+                logging.info("Loading init net from {}".format(self.use_same_init_net_as))
+            self.net_target = self.__new_net()
             self.net_target.load_state_dict(self.net.state_dict())
-            self.net_reg = self._new_net()
+            self.net_reg = self.__new_net()
             self.net_reg.load_state_dict(self.net.state_dict())
-            self.net_reg_ = self._new_net()
+            self.net_reg_ = self.__new_net()
             self.net_reg_.load_state_dict(self.net.state_dict())
             self.optimizer = torch.optim.Adam(
                 self.net.parameters(),
@@ -190,7 +185,7 @@ class RNaD:
             )
             self.m = 0
             self.n = 0
-            self._save_checkpoint()
+            self.__save_checkpoint()
 
         else:
 
@@ -216,7 +211,7 @@ class RNaD:
                 if not f.is_dir()
             ]
             self.n = max(checkpoints)
-            self._load_checkpoint(self.m, self.n)
+            self.__load_checkpoint(self.m, self.n)
 
         if self.wandb:
             wandb.init(
@@ -226,17 +221,17 @@ class RNaD:
             )
             wandb.run.name = self.directory_name
 
-    def _load_checkpoint(self, m, n):
+    def __load_checkpoint(self, m, n):
         saved_dict = torch.load(os.path.join(self.directory, str(m), str(n)))
         self.total_steps = saved_dict["total_steps"]
         self.net_params = saved_dict["net_params"]
-        self.net = self._new_net()
+        self.net = self.__new_net()
         self.net.load_state_dict(saved_dict["net"])
-        self.net_target = self._new_net()
+        self.net_target = self.__new_net()
         self.net_target.load_state_dict(saved_dict["net_target"])
-        self.net_reg = self._new_net()
+        self.net_reg = self.__new_net()
         self.net_reg.load_state_dict(saved_dict["net_reg"])
-        self.net_reg_ = self._new_net()
+        self.net_reg_ = self.__new_net()
         self.net_reg_.load_state_dict(saved_dict["net_reg_"])
         self.optimizer = torch.optim.Adam(
             self.net.parameters(),
@@ -246,7 +241,7 @@ class RNaD:
         )
         self.optimizer.load_state_dict(saved_dict["optimizer"])
 
-    def _save_checkpoint(self):
+    def __save_checkpoint(self):
         saved_dict = {
             "total_steps": self.total_steps,
             "net_params": self.net_params,
@@ -260,7 +255,7 @@ class RNaD:
             os.mkdir(os.path.join(self.directory, str(self.m)))
         torch.save(saved_dict, os.path.join(self.directory, str(self.m), str(self.n)))
 
-    def _load_saved_net(self, net: torch.nn.Module, m, key="net_reg"):
+    def __load_saved_net(self, net: torch.nn.Module, m, key="net_reg"):
         """
         Modify net in place to a checkpoint net from m=m, n=0
         """
@@ -271,7 +266,7 @@ class RNaD:
         saved_dict = torch.load(os.path.join(self.directory, str(m), "0"))
         net.load_state_dict(saved_dict[key])
 
-    def _get_update_info(self) -> tuple[bool, int]:
+    def __get_update_info(self) -> tuple[bool, int]:
         bounding_indices = [_ for _, bound in enumerate(self.bounds) if bound > self.m]
         if not bounding_indices:
             return False, 0
@@ -279,7 +274,7 @@ class RNaD:
         idx = min(bounding_indices)
         return True, self.delta_m[idx]
 
-    def _nash_conv(
+    def __nash_conv(
         self,
     ):
         """
@@ -298,7 +293,7 @@ class RNaD:
             logging.info("depth:{}, nash_conv:{}".format(depth, nash_conv))
         return (nash_conv_data_target.max_1 - nash_conv_data_target.min_2)[1].item()
 
-    def _learn(
+    def __learn(
         self,
         episodes: episode.Episodes,
         alpha: float,
@@ -407,19 +402,19 @@ class RNaD:
         log_mod=20,
     ) -> None:
         
-        buffer = episode.Buffer(self.buffer_size)
+        buffer = episode.Buffer(self.n_batches_per_buffer)
         for _ in range(max_updates):
-            may_resume, delta_m = self._get_update_info()
+            may_resume, delta_m = self.__get_update_info()
             
             if not may_resume:
                 return
 
             logging.info("m: {}, delta_m: {}".format(self.m, delta_m))
 
-            buffer.max_size = self.buffer_size
+            buffer.max_size = self.n_batches_per_buffer
 
             if self.m % expl_mod == 0 and self.n == 0 and self.m != 0:
-                nash_conv = self._nash_conv()
+                nash_conv = self.__nash_conv()
                 if self.wandb:
                     wandb.log({"nash_conv": nash_conv}, step=self.total_steps)
 
@@ -428,7 +423,7 @@ class RNaD:
                 alpha = self.alpha_lambda(self.n, delta_m)
 
                 if self.n % checkpoint_mod == 0:
-                    self._save_checkpoint()
+                    self.__save_checkpoint()
 
                 if self.total_steps % self.buffer_mod == 0:
                     episodes = episode.Episodes(self.tree, self.batch_size)
@@ -438,7 +433,7 @@ class RNaD:
                 episodes_sample = buffer.sample(self.batch_size)
 
                 log = {} if (self.n % log_mod == 0 and self.wandb) else None
-                self._learn(episodes_sample, alpha, log=log)
+                self.__learn(episodes_sample, alpha, log=log)
                 if log:
                     wandb.log(log, step=self.total_steps)
 
@@ -462,7 +457,7 @@ class RNaD:
             self.net_reg.load_state_dict(self.net_target.state_dict())
 
     def run(self, max_updates=10**6, checkpoint_mod=1000, expl_mod=1, log_mod=20):
-        self._initialize()
+        self.__initialize()
         self._resume(
             max_updates=max_updates,
             checkpoint_mod=checkpoint_mod,
@@ -471,7 +466,3 @@ class RNaD:
         )
         if self.wandb:
             wandb.finish()
-
-
-if __name__ == "__main__":
-    pass
