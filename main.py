@@ -11,7 +11,7 @@ if __name__ == "__main__":
     """
     The following is a minimal application of the project.
     We first generate a small tree, so that we can show convergence
-    on CPU in a reasonable amount of time. Then we save the tree onto disc,
+    on even on CPU in a reasonable amount of time. Then we save the tree onto disc,
     so that if we want to do another RNaD run on the same tree, we can simply
     call "tree.load()" instead.
 
@@ -42,6 +42,7 @@ if __name__ == "__main__":
     tree.assert_index_is_tree()
     tree.save("small_tree")
     # tree.load('small_tree')
+    # Swap comments in the above two lines if you have already generated the tree. Otherwise it will simply be overwritten.
 
     etas_to_test = [0, 0.2, 0.5, 1]
     timestamp = str(int(time()))
