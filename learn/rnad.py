@@ -18,13 +18,24 @@ import wandb
 class RNaD:
 
     """
-    Represents a run of the RNaD algorithm on a given game Tree.
+    Represents a run of the Regularized Nash Dynamics algorithm on a given game Tree and fixed set of hyperparameters.
+    Calling "run" on an RNaD object will automaticlly create a folder with its 'directory_name' in the saved_runs directory.
+    There a 'params' object will be saved together with the initial network weights ('checkpoint') at n=0, m=0.
+    
+    During its run, the RNaD object will periodically save checkpoint info at update n, step m in 'm.tar' in the directory 'saved_runs/directory_name/n'.
+    If the run is ended prematurely, the next time 'run' is called the object will look in 'saved_runs/directory_name' to find the latest checkpoint and automatically resume from there.
+    Its associated wandb run will also be resumed.
+
+    We use the paper's convention of refering to an update of the learner nets parameters as a 'step' and an update of the regularization nets as an 'update'.
+
+    The default parameters are copied from the paper for clarity. They are not recommended for small scale tests. Instead, refer to those in main.py.
     """
 
     def __init__(
         self,
         tree: tree.Tree,
         device=torch.device("cuda"),
+        directory_name=None,
 
         batch_size=3 * 2**8,
         eta=0.2,
@@ -54,7 +65,6 @@ class RNaD:
 
         n_batches_per_buffer=1,  # This simulates no buffer
         buffer_mod=1,  # How many steps to grab new batch
-        directory_name=None,
         net_params=None,
         vtrace_gamma=1,
         value_loss_weight=1,
@@ -62,6 +72,44 @@ class RNaD:
         wandb=False,
         use_same_init_net_as=False,
     ):
+
+        """
+        tree:
+            The tree game the object will be tied to. On resume, a check is performed that the trees hash corresponds to the one saved when the RNaD object was first initialized.
+        eta:
+            Coefficient for reward transformation. eta=0 means no regularization, which is equivalent to vanilla policy gradient.
+        bounds:
+        delta_m:
+            Schedule for regularization. The correspond to 'n' and 'm' in the paper, respectively.
+        lr:
+            Learning rate. It is currently fixed thoughout the run.
+        logit_clip:
+            The logit output of the policy net is bounded by [-logit_clip, logit_clip], for numerical stability. If a step has logs enabled the the mean logit ouput and the max diffenence from that mean are recorded.
+        neurd_clip:
+            xxx
+        grad_clip:
+            Normal gradient clip applied each step.
+        b1_adam:
+        b2_adam:
+        epsilon_adam
+            Parameters for the Adam optimizer.
+        gamma_averaging:
+            Weight for the exponential averaging of the target network.
+        epsilon_threashold:
+        n_discrete:
+            Parameters for post-processing of the learner policy. Not used during data generation.buffer
+        n_batches_per_buffer
+            Number of 'Episodes' objects to store in the replay buffer. Default value of one means a fresh batch of episodes is used every step, so the algorithm is on-policy.
+        buffer_mod:
+            Number of steps before a new Episodes object is added to the buffer.
+        vtrace_loss_weight:
+        neurd_loss_weight:
+            Weights for the loss of value and policy, respectively
+        wandb:
+            Whether to use wandb for data visualization.
+        use_same_init_net_as:
+            If a directory_name is passed, the RNaD object will use the same initial network weights as that run. 
+        """
 
         self.tree = tree
         self.tree_hash = 0
@@ -123,11 +171,12 @@ class RNaD:
         self.net_reg: net.ConvNet = None
         self.net_reg_: net.ConvNet = None
 
-        self.alpha_lambda = lambda n, delta_m: 1 if n > delta_m / 2 else n * 2 / delta_m
-
     def __new_net(
         self,
     ) -> nn.Module:
+        """
+        Initialize a network on self.device with self.net_params
+        """
         if self.net_params["type"] == "ConvNet":
             t = net.ConvNet
         if self.net_params["type"] == "MLP":
@@ -140,25 +189,27 @@ class RNaD:
 
     def __initialize(self):
 
+        """
+        Creates a new directory and saves initial network weights in the first update
+        """
+
         logging.info("Initializing R-NaD run: {}".format(self.directory_name))
 
         if not os.path.exists(self.directory):
             os.mkdir(self.directory)
 
-        updates = [
+        saved_updates = [
             int(os.path.relpath(f.path, self.directory))
             for f in os.scandir(self.directory)
             if f.is_dir()
         ]
-        if not updates:
-            if hasattr(self.tree, "hash"):
-                self.tree_hash = self.tree.hash
+        if not saved_updates:
+            self.tree_hash = self.tree.hash
             params_dict = {key: self.__dict__[key] for key in self.saved_keys}
             torch.save(params_dict, os.path.join(self.directory, "params"))
 
             os.mkdir(os.path.join(self.directory, "0"))
-            self.net = self.__new_net()
-            self.net.train()
+            self.net = self.__new_net()            
             if self.use_same_init_net_as:
                 net_dir = os.path.join(
                     os.path.dirname(os.path.realpath(__file__)),
@@ -166,11 +217,12 @@ class RNaD:
                     "saved_runs",
                     self.use_same_init_net_as,
                     "0",
-                    "0",
+                    "0.tar",
                 )
                 checkpoint = torch.load(net_dir)
                 self.net.load_state_dict(checkpoint["net"])
                 logging.info("Loading init net from {}".format(self.use_same_init_net_as))
+            self.net.train()
             self.net_target = self.__new_net()
             self.net_target.load_state_dict(self.net.state_dict())
             self.net_reg = self.__new_net()
@@ -186,6 +238,7 @@ class RNaD:
             self.m = 0
             self.n = 0
             self.__save_checkpoint()
+            # this initial checkpoint marks the object has having been initialized; 'saved_updates' will be non-empty now
 
         else:
 
@@ -193,17 +246,21 @@ class RNaD:
             for key, value in params_dict.items():
                 if key == "directory_name":
                     params_dict[key] = self.directory_name
+                    # renaming the directory will update the saved value for 'directory_name' 
                     continue
                 if key == "device":
+                    # resuming a run with a new device will move the nets to that device
                     continue
                 if torch.is_tensor(value):
                     params_dict[key] = params_dict[key].to(self.device)
                 if key == "tree_hash":
+                    # resuming will fail if the keys dont match
                     assert params_dict["tree_hash"] == self.tree.hash
                 self.__dict__[key] = value
             torch.save(params_dict, os.path.join(self.directory, "params"))
+            # overwrite the saved params with the above changes
 
-            self.m = max(updates)
+            self.m = max(saved_updates)
             last_update = os.path.join(self.directory, str(self.m))
             checkpoints = [
                 int(os.path.relpath(f.path, last_update))
@@ -212,17 +269,23 @@ class RNaD:
             ]
             self.n = max(checkpoints)
             self.__load_checkpoint(self.m, self.n)
+            # use the latest checkpoint
 
         if self.wandb:
             wandb.init(
-                resume=bool(updates),
+                resume=bool(saved_updates),
                 project="RNaD",
                 config={key: self.__dict__[key] for key in self.saved_keys},
             )
             wandb.run.name = self.directory_name
 
     def __load_checkpoint(self, m, n):
-        saved_dict = torch.load(os.path.join(self.directory, str(m), str(n)))
+
+        """
+        Updates the net weights, optimizer state, and certain stat members from those saved in the checkpoint
+        """
+
+        saved_dict = torch.load(os.path.join(self.directory, str(m), "{}.tar".format(str(n))))
         self.total_steps = saved_dict["total_steps"]
         self.net_params = saved_dict["net_params"]
         self.net = self.__new_net()
@@ -255,18 +318,12 @@ class RNaD:
             os.mkdir(os.path.join(self.directory, str(self.m)))
         torch.save(saved_dict, os.path.join(self.directory, str(self.m), str(self.n)))
 
-    def __load_saved_net(self, net: torch.nn.Module, m, key="net_reg"):
-        """
-        Modify net in place to a checkpoint net from m=m, n=0
-        """
-        if m is None:
-            net.load_state_dict(self.net.state_dict())
-            return
-        m = max(m, 0)
-        saved_dict = torch.load(os.path.join(self.directory, str(m), "0"))
-        net.load_state_dict(saved_dict[key])
-
     def __get_update_info(self) -> tuple[bool, int]:
+
+        """
+        The bool value is whether the run is finished, and second is the new delta_m value which determines when how many steps until the next update.
+        """
+
         bounding_indices = [_ for _, bound in enumerate(self.bounds) if bound > self.m]
         if not bounding_indices:
             return False, 0
@@ -274,19 +331,18 @@ class RNaD:
         idx = min(bounding_indices)
         return True, self.delta_m[idx]
 
-    def __nash_conv(
-        self,
-    ):
+    def __nash_conv(self,):
+        
         """
         This logs the depth stratified NashConv values.
         Note: NashConv at the largest depth is for the root node, or the whole game tree
-        It is the metric of interest. The target net is used instead of the actor,
+        This is the metric of primary interest. The target net is used instead of the actor,
         although that can be added if wanted. In my experience, the target is the one that converges. 
         """
+
         logging.info(
             "NashConv at m: {}, n: {}, step {}".format(self.m, self.n, self.total_steps)
         )
-        logging.info("\nnet target")
         nash_conv_data_target = metric.nash_conv(self.tree, self.net_target)
         mean_nash_conv_target = metric.mean_nash_conv_by_depth(nash_conv_data_target)
         for depth, nash_conv in mean_nash_conv_target.items():
@@ -299,6 +355,11 @@ class RNaD:
         alpha: float,
         log: dict = None,
     ):
+        
+        """
+        Computes gradients for learner net from sampled batch of trajectories.
+        This is where the reward transformation/regularization is performed.
+        """
 
         player_id = episodes.turns
         action_oh = episodes.actions
@@ -309,8 +370,7 @@ class RNaD:
         T = valid.shape[0]
 
         logit, log_pi, pi, v = self.net.forward_batch(episodes)
-        pi_processed = pi
-        # pi_processed = vtrace.process_policy(pi, episodes.masks, self.n_discrete, self.epsilon_threshold) # TODO this function seems to filter masks too? ofc duh
+        pi_processed = vtrace.process_policy(pi, episodes.masks, self.n_discrete, self.epsilon_threshold)
         v_target_list, has_played_list, v_trace_policy_target_list = [], [], []
 
         with torch.no_grad():
@@ -394,7 +454,7 @@ class RNaD:
 
         nn.utils.clip_grad_norm_(self.net.parameters(), self.grad_clip)
 
-    def _resume(
+    def __resume(
         self,
         max_updates=10**6,
         checkpoint_mod=1000,
@@ -420,7 +480,7 @@ class RNaD:
 
             while self.n < delta_m:
 
-                alpha = self.alpha_lambda(self.n, delta_m)
+                alpha = 1 if self.n > delta_m / 2 else self.n * 2 / delta_m
 
                 if self.n % checkpoint_mod == 0:
                     self.__save_checkpoint()
@@ -458,7 +518,7 @@ class RNaD:
 
     def run(self, max_updates=10**6, checkpoint_mod=1000, expl_mod=1, log_mod=20):
         self.__initialize()
-        self._resume(
+        self.__resume(
             max_updates=max_updates,
             checkpoint_mod=checkpoint_mod,
             expl_mod=expl_mod,
