@@ -126,15 +126,15 @@ class Tree:
         legal_shape = (1, 1, max_actions, max_actions)
         nash_shape = (1, max_actions * 2)
 
-        self.index = torch.zeros(value_shape, device=device, dtype=torch.long)
-        self.value = torch.zeros(value_shape, device=device, dtype=torch.float)
-        self.expected_value = torch.zeros(legal_shape, device=device, dtype=torch.float)
-        self.legal = torch.zeros(legal_shape, device=device, dtype=torch.float)
-        self.legal[0, 0, : self.row_actions, : self.col_actions] = 1.0
-        self.chance = self._transition_probs(
+        self.index_tensor = torch.zeros(value_shape, device=device, dtype=torch.long)
+        self.value_tensor = torch.zeros(value_shape, device=device, dtype=torch.float)
+        self.expected_value_tensor = torch.zeros(legal_shape, device=device, dtype=torch.float)
+        self.legal_tensor = torch.zeros(legal_shape, device=device, dtype=torch.float)
+        self.legal_tensor[0, 0, : self.row_actions, : self.col_actions] = 1.0
+        self.chance_tensor = self._transition_probs(
             max_actions, max_actions, max_transitions, transition_threshold
         )
-        self.chance *= self.legal
+        self.chance_tensor *= self.legal_tensor
         self.root_value = torch.zeros((1, 1), device=device, dtype=torch.float)
         # NE payoff for the subtree
         self.solution = torch.zeros(nash_shape, device=device, dtype=torch.float)
@@ -253,7 +253,7 @@ class Tree:
         for row in range(self.row_actions):
             for col in range(self.col_actions):
                 for chance in range(self.max_transitions):
-                    transition_prob = self.chance[0, chance, row, col]
+                    transition_prob = self.chance_tensor[0, chance, row, col]
 
                     if transition_prob > 0:
                         child = self._init_child()
@@ -264,8 +264,8 @@ class Tree:
                         ):
                             child.generate()
                             children.append(child)
-                            subtree_sizes.append(child.value.shape[0])
-                            self.index[0, chance, row, col] = 1
+                            subtree_sizes.append(child.value_tensor.shape[0])
+                            self.index_tensor[0, chance, row, col] = 1
                             child_payoff = child.root_value[:1]
 
                         else:
@@ -274,15 +274,15 @@ class Tree:
                                 ((random.choice(self.terminal_values),),)
                             ).to(self.device)
 
-                        self.value[0, chance, row, col] = child_payoff.item()
+                        self.value_tensor[0, chance, row, col] = child_payoff.item()
                         # Set the entry for the parents value tensor
 
-                self.expected_value[0, 0, row, col] = torch.sum(
-                    self.value[0, :, row, col] * self.chance[0, :, row, col]
+                self.expected_value_tensor[0, 0, row, col] = torch.sum(
+                    self.value_tensor[0, :, row, col] * self.chance_tensor[0, :, row, col]
                 )
                 # Calculate expected value for the parents tensor for the joint player actions.
 
-        game_matrix = self.expected_value[0, 0, : self.row_actions, : self.col_actions]
+        game_matrix = self.expected_value_tensor[0, 0, : self.row_actions, : self.col_actions]
         game_solutions = self._solve(game_matrix, self.max_actions)
         if len(game_solutions) == 0:
             raise Exception(
@@ -310,11 +310,11 @@ class Tree:
         """
         total_length = 1
         for child in children:
-            index_adjustment = child.index.clone()
+            index_adjustment = child.index_tensor.clone()
             index_adjustment[index_adjustment > 0] = 1.0
             index_adjustment *= total_length
-            child.index += index_adjustment
-            total_length += child.value.shape[0]
+            child.index_tensor += index_adjustment
+            total_length += child.value_tensor.shape[0]
         # update index tensors for subtrees
 
         transition_idx = 0
@@ -323,9 +323,9 @@ class Tree:
         for row in range(self.row_actions):
             for col in range(self.col_actions):
                 for chance in range(self.max_transitions):
-                    if self.chance[0, chance, row, col] != 0:
+                    if self.chance_tensor[0, chance, row, col] != 0:
                         total_sum += subtree_sizes[transition_idx]
-                        self.index[0, chance, row, col] *= total_sum
+                        self.index_tensor[0, chance, row, col] *= total_sum
                         transition_idx += 1
         # update index tensor for parent's root
 
@@ -344,8 +344,8 @@ class Tree:
                 row_actions=1,
                 col_actions=1,
             )
-            absorbing_state.chance[0, :, 0, 0] = 0
-            absorbing_state.chance[0, 0, 0, 0] = 1
+            absorbing_state.chance_tensor[0, :, 0, 0] = 0
+            absorbing_state.chance_tensor[0, 0, 0, 0] = 1
             prefix.insert(0, absorbing_state)
 
         for key in [
@@ -362,7 +362,7 @@ class Tree:
             )
 
         if self.is_root:
-            self.index += self.index != 0
+            self.index_tensor += self.index_tensor != 0
             self.hash = torch.randint(-(2**63), 2**63 - 1, size=(1,)).item()
 
     def assert_index_is_tree(self):
@@ -371,12 +371,12 @@ class Tree:
         i.e. the non-zero values in the index[idx] are all > idx,
         and the non-zero values in index are one-to-one with some interval [1 + is_root, x]
         """
-        indices = self.index[self.index != 0]
+        indices = self.index_tensor[self.index_tensor != 0]
         indices = indices.tolist()
         indices.sort()
         all_possible_indices = list(range(1 + self.is_root, 2 + len(indices)))  #
         assert indices == all_possible_indices
-        for idx, index_slice in enumerate(self.index[1:]):
+        for idx, index_slice in enumerate(self.index_tensor[1:]):
             greater_than_idx = index_slice > idx
             is_zero = index_slice == 0
             is_valid = torch.logical_or(greater_than_idx, is_zero)

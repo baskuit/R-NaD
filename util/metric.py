@@ -18,7 +18,7 @@ class NashConvData:
     """
 
     def __init__(self, tree: tree.Tree):
-        self.size = tree.value.shape[0]
+        self.size = tree.value_tensor.shape[0]
         self.joint_policy = torch.zeros(
             (self.size, 2 * tree.max_actions), device=tree.device, dtype=torch.float
         )
@@ -63,8 +63,8 @@ class NashConvData:
                 min((_ + 1) * inference_batch_size, self.size),
                 device=tree.device,
             )
-            value_slice = tree.expected_value[slice_range]
-            legal_slice = tree.legal[slice_range]
+            value_slice = tree.expected_value_tensor[slice_range]
+            legal_slice = tree.legal_tensor[slice_range]
 
             with torch.no_grad():
 
@@ -119,17 +119,17 @@ class NashConvData:
         pi_col = pi[tree.max_actions :].unsqueeze(dim=1)
 
         value_root = torch.flatten(
-            tree.value[state_index : state_index + 1]
+            tree.value_tensor[state_index : state_index + 1]
         )  # (1, n_trans, max_actions, max_actions)
         index_root = torch.flatten(
-            tree.index[state_index : state_index + 1]
+            tree.index_tensor[state_index : state_index + 1]
         )  # (1, n_trans, max_actions, max_actions)
         chance_root = torch.flatten(
-            tree.chance[state_index : state_index + 1]
+            tree.chance_tensor[state_index : state_index + 1]
         )
         joint_policy_matrix_flat = torch.flatten(
             torch.matmul(pi_col, pi_row)
-        ).repeat(tree.chance.shape[1])
+        ).repeat(tree.chance_tensor.shape[1])
 
         children = (chance_root > 0).nonzero()
         depths: List[int] = []
@@ -164,8 +164,8 @@ class NashConvData:
         row_best_case_matrix = torch.sum(row_best_case_matrix, dim=0)
         col_best_case_matrix = torch.sum(col_best_case_matrix, dim=0)
 
-        row_actions_mask = tree.legal[state_index, 0, :, 0].to(torch.bool)
-        col_actions_mask = tree.legal[state_index, 0, 0, :].to(torch.bool)
+        row_actions_mask = tree.legal_tensor[state_index, 0, :, 0].to(torch.bool)
+        col_actions_mask = tree.legal_tensor[state_index, 0, 0, :].to(torch.bool)
         row_responses = torch.flatten(torch.matmul(row_best_case_matrix, pi_col))[row_actions_mask]
         col_responses = torch.flatten(torch.matmul(pi_row, col_best_case_matrix))[col_actions_mask]
 

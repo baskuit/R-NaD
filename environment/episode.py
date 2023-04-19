@@ -59,8 +59,8 @@ class States:
         but in theory those could be legal actions that happen to have an expected row payoff of 0.
         This would be unlikely, and in practice would could probably omit the legal actions mask without any detriment to learning. 
         """
-        expected_value = torch.index_select(self.tree.expected_value, 0, self.indices)
-        legal_actions = torch.index_select(self.tree.legal, 0, self.indices)
+        expected_value = torch.index_select(self.tree.expected_value_tensor, 0, self.indices)
+        legal_actions = torch.index_select(self.tree.legal_tensor, 0, self.indices)
         row_observations = torch.cat([expected_value, legal_actions], dim=1)
         col_observations = torch.cat([-expected_value, legal_actions], dim=1).swapaxes(2, 3)
         observations = torch.stack([row_observations, col_observations], dim=1)
@@ -103,9 +103,9 @@ class States:
             self.col_actions = actions
             self.player_to_move = 1 - self.player_to_move
 
-            index = torch.index_select(self.tree.index, 0, self.indices)
-            chance = torch.index_select(self.tree.chance, 0, self.indices)
-            value = torch.index_select(self.tree.value, 0, self.indices)
+            index = torch.index_select(self.tree.index_tensor, 0, self.indices)
+            chance = torch.index_select(self.tree.chance_tensor, 0, self.indices)
+            value = torch.index_select(self.tree.value_tensor, 0, self.indices)
             chance_strategy_profiles = chance[
                 torch.arange(self.batch_size), :, self.row_actions, self.col_actions
             ]
