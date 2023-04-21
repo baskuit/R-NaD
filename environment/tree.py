@@ -135,9 +135,9 @@ class Tree:
             max_actions, max_actions, max_transitions, transition_threshold
         )
         self.chance_tensor *= self.legal_tensor
-        self.root_value = torch.zeros((1, 1), device=device, dtype=torch.float)
+        self.root_value_tensor = torch.zeros((1, 1), device=device, dtype=torch.float)
         # NE payoff for the subtree
-        self.solution = torch.zeros(nash_shape, device=device, dtype=torch.float)
+        self.solution_tensor = torch.zeros(nash_shape, device=device, dtype=torch.float)
         self.desc = desc
         self.hash = 0
         # Unique identifier for a tree, so as not to mix up trees with nets that were trained on them.
@@ -266,7 +266,7 @@ class Tree:
                             children.append(child)
                             subtree_sizes.append(child.value_tensor.shape[0])
                             self.index_tensor[0, chance, row, col] = 1
-                            child_payoff = child.root_value[:1]
+                            child_payoff = child.root_value_tensor[:1]
 
                         else:
                             subtree_sizes.append(0)
@@ -295,10 +295,10 @@ class Tree:
         p2_strategy = joint_strategy[self.max_actions :][: self.col_actions].unsqueeze(
             dim=1
         )
-        self.root_value = torch.matmul(
+        self.root_value_tensor = torch.matmul(
             torch.matmul(p1_strategy, game_matrix), p2_strategy
         )
-        self.solution = joint_strategy.unsqueeze(dim=0)
+        self.solution_tensor = joint_strategy.unsqueeze(dim=0)
 
         """
         Below we adjust the index tensor entries for the child subtrees and the parent (at the index).
@@ -349,13 +349,13 @@ class Tree:
             prefix.insert(0, absorbing_state)
 
         for key in [
-            "index",
-            "value",
-            "expected_value",
-            "chance",
-            "legal",
-            "root_value",
-            "solution",
+            "index_tensor",
+            "value_tensor",
+            "expected_value_tensor",
+            "chance_tensor",
+            "legal_tensor",
+            "root_value_tensor",
+            "solution_tensor",
         ]:
             self.__dict__[key] = torch.cat(
                 tuple(tree.__dict__[key] for tree in prefix + children), dim=0
