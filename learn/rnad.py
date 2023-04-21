@@ -348,7 +348,7 @@ class RNaD:
         mean_nashconv: Dict[int, float] = nashconv_data.mean_nashconv_by_depth()
         for depth, nashconv in mean_nashconv.items():
             logging.info("depth:{}, nash_conv:{}".format(depth, nashconv))
-        return (nashconv_data.row_best[1] - nashconv_data.col_best[1]).item()
+        return (nashconv_data.row_best[1] + nashconv_data.col_best[1]).item()
 
     def __learn(
         self,
@@ -490,7 +490,7 @@ class RNaD:
             if self.m % expl_mod == 0 and self.n == 0 and self.m != 0:
                 nashconv = self.__nashconv()
                 if self.wandb:
-                    wandb.log({"nash_conv": nashconv}, step=self.total_steps)
+                    wandb.log({"nashconv": nashconv}, step=self.total_steps)
 
             while self.n < delta_m:
 
