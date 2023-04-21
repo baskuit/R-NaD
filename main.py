@@ -3,15 +3,15 @@ import logging
 from time import time
 from random import random
 
-from game import Tree
-from rnad import RNaD
+from environment.tree import Tree
+from learn.rnad import RNaD
 
 if __name__ == "__main__":
 
     """
     The following is a minimal application of the project.
     We first generate a small tree, so that we can show convergence
-    on CPU in a reasonable amount of time. Then we save the tree onto disc,
+    on even on CPU in a reasonable amount of time. Then we save the tree onto disc,
     so that if we want to do another RNaD run on the same tree, we can simply
     call "tree.load()" instead.
 
@@ -42,6 +42,7 @@ if __name__ == "__main__":
     tree.assert_index_is_tree()
     tree.save("small_tree")
     # tree.load('small_tree')
+    # Swap comments in the above two lines if you have already generated the tree. Otherwise it will simply be overwritten.
 
     etas_to_test = [0, 0.2, 0.5, 1]
     timestamp = str(int(time()))
@@ -52,11 +53,11 @@ if __name__ == "__main__":
         # We want to use same initial net to compare. Usually I have a pre-saved run sitting around.
 
         trial = RNaD(
-            same_init_net=same_init_net,
+            use_same_init_net_as=same_init_net,
             tree=tree,
             directory_name=f"{timestamp}-eta={eta}",
             device=tree.device,
-            wandb=True,
+            wandb=False,
             eta=eta,
             bounds=[
                 64,
@@ -69,7 +70,7 @@ if __name__ == "__main__":
             batch_size=2**9,
             logit_clip=2,
             # net_params= {'type':'ConvNet','size':tree.max_actions,'channels':2**4,'depth':2,'batch_norm':True,'device':tree.device},
-            net_params={"type": "MLP", "size": tree.max_actions, "width": 2**8},
+            net_params={"type": "MLP", "max_actions": tree.max_actions, "width": 2**8},
         )
 
         trial.run(
