@@ -20,7 +20,7 @@ def test_nashconv (max_actions: int, max_transitions: int, depth: int,):
     tree.generate()
 
     data = NashConvData(tree)
-    data.get_nashconv(tree, tree.solution)
+    data.get_nashconv(tree, tree.solution_tensor)
 
     nashconv = (data.row_best[1] + data.col_best[1]).item()
     total_reach_probablity = torch.sum(data.reach_probability).item()
